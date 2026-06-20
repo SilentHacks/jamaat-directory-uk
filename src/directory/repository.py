@@ -1,7 +1,7 @@
 import json
 import math
 
-from sqlalchemy import delete, exists, select
+from sqlalchemy import delete, exists, func, select
 from sqlalchemy.orm import Session
 
 from directory.models import ExtractorRun, Mosque, Occurrence, Source
@@ -237,3 +237,19 @@ def set_source_state(
         src.last_fetched_at = last_fetched_at
     if source_html_hash is not None:
         src.source_html_hash = source_html_hash
+
+
+def mosques_with_website(session: Session) -> list[Mosque]:
+    return list(
+        session.scalars(
+            select(Mosque).where(Mosque.website_url.is_not(None)).order_by(Mosque.id)
+        )
+    )
+
+
+def update_mosque_website(session: Session, mosque_id: str, website_url: str | None) -> None:
+    m = session.get(Mosque, mosque_id)
+    if m is None:
+        return
+    m.website_url = website_url
+    m.updated_at = func.now()
