@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block content %}
+<p class="muted">{{ count }} mosques. Search by name or city.</p>
+<input type="search" name="q" placeholder="Search mosques…"
+       hx-get="/search" hx-trigger="input changed delay:300ms, search"
+       hx-target="#results" hx-swap="outerHTML">
+{% include "_mosque_rows.html" %}
+{% endblock %}

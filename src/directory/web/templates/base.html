@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}UK Mosque Jamaat Directory{% endblock %}</title>
+  <script src="/static/htmx.min.js" defer></script>
+  <style>
+    :root { font-family: system-ui, sans-serif; line-height: 1.5; }
+    body { max-width: 50rem; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+    h1 a { color: inherit; text-decoration: none; }
+    input[type=search] { width: 100%; padding: .6rem; font-size: 1rem; }
+    table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+    th, td { text-align: left; padding: .4rem .6rem; border-bottom: 1px solid #eee; }
+    a { color: #0b5; }
+    .muted { color: #777; }
+  </style>
+</head>
+<body>
+  <h1><a href="/">UK Mosque Jamaat Directory</a></h1>
+  {% block content %}{% endblock %}
+  <footer class="muted"><p>Identity data: MuslimsInBritain. <a href="/docs">API docs</a>.</p></footer>
+</body>
+</html>

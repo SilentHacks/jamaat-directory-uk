@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}{{ m.name }} — Jamaat Directory{% endblock %}
+{% block content %}
+<p><a href="/">&larr; All mosques</a></p>
+<h2>{{ m.name }}</h2>
+<p class="muted">
+  {{ m.address or "" }}{% if m.city %}, {{ m.city }}{% endif %}
+  {% if m.postcode %} {{ m.postcode }}{% endif %}
+</p>
+<ul>
+  <li>Coordinates: {{ "%.4f"|format(m.lat) }}, {{ "%.4f"|format(m.lng) }}</li>
+  <li>Website:
+    {% if m.website_url %}<a href="{{ m.website_url }}" rel="nofollow noopener">{{ m.website_url }}</a>
+    {% else %}<span class="muted">not recorded</span>{% endif %}
+  </li>
+  <li>Status: {{ m.status }}</li>
+  <li>Timetable: {% if has_times %}available via <a href="/v1/mosques/{{ m.id }}/times">API</a>{% else %}<span class="muted">not yet extracted</span>{% endif %}</li>
+</ul>
+{% endblock %}

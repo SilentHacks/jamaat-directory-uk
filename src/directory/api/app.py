@@ -1,6 +1,10 @@
+from importlib import resources
+
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from directory.api import admin, mosques, times
+from directory.web import routes as web_routes
 
 
 def create_app() -> FastAPI:
@@ -12,6 +16,10 @@ def create_app() -> FastAPI:
     app.include_router(mosques.router, prefix="/v1")
     app.include_router(times.router, prefix="/v1")
     app.include_router(admin.router, prefix="/v1")
+    app.include_router(web_routes.router)
+
+    static_dir = resources.files("directory.web").joinpath("static")
+    app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
     return app
 
 
