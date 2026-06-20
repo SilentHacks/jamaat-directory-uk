@@ -1,6 +1,7 @@
 import pytest
 
 from directory.db import init_db, make_engine, session_scope
+from directory.ingest.harness import HarnessResult
 from directory.models import Mosque, Occurrence
 
 
@@ -34,3 +35,19 @@ def seeded(engine):
             ]
         )
     return engine
+
+
+class FakeHarness:
+    """Deterministic AuthorHarness double. `script` is a {model: text} dict or a
+    plain string returned for every model. Records calls in `.calls`."""
+
+    name = "fake"
+
+    def __init__(self, script):
+        self.script = script
+        self.calls: list[str] = []
+
+    def run(self, prompt: str, *, model: str) -> HarnessResult:
+        self.calls.append(model)
+        text = self.script.get(model, "") if isinstance(self.script, dict) else self.script
+        return HarnessResult(text, model, True)
