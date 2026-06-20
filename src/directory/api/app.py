@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 
-from directory.api import mosques
+from directory.api import mosques, times
 
 
 def create_app() -> FastAPI:
@@ -10,6 +10,7 @@ def create_app() -> FastAPI:
         description="Jamaat timetables for UK mosques. Data layer for Sirat.",
     )
     app.include_router(mosques.router, prefix="/v1")
+    app.include_router(times.router, prefix="/v1")
     return app
 
 
