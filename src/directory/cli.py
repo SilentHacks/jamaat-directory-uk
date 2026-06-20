@@ -4,9 +4,11 @@ import typer
 
 from directory.config import Settings
 from directory.db import init_db, make_engine
+from directory.ingest.discover import discover_mosque, run_discovery
 from directory.ingest.mib import clean_mib_export, write_seed_file
 from directory.ingest.runner import extract_source, run_extract
 from directory.ingest.seed import load_seed_file, seed_database
+from directory.ingest.website import validate_websites
 
 app = typer.Typer(help="UK Mosque Jamaat Directory CLI")
 
@@ -70,6 +72,37 @@ def extract(
     for o in outcomes:
         typer.echo(f"{o.source_id}: lane={o.lane} status={o.triage_status} rows={o.rows_written}")
     typer.echo(f"Processed {len(outcomes)} source(s)")
+
+
+@app.command("validate-websites")
+def validate_websites_cmd() -> None:
+    """Verify-or-empty the known mosque websites (resolve redirects, drop dead)."""
+    engine = _engine_from_env()
+    summary = validate_websites(engine)
+    typer.echo(
+        f"checked={summary.checked} repaired={summary.repaired} "
+        f"dropped={summary.dropped} unchanged={summary.unchanged}"
+    )
+
+
+@app.command()
+def discover(
+    mosque_id: str | None = typer.Option(None, "--mosque-id", help="Discover one mosque"),  # noqa: B008
+    horizon_days: int = typer.Option(60, "--horizon-days", help="Verification horizon"),  # noqa: B008
+) -> None:
+    """Run the deterministic discovery funnel (liveness → platform → gather)."""
+    settings = Settings()
+    engine = make_engine(settings.database_url)
+    root = settings.candidate_dir
+    if mosque_id is not None:
+        outcomes = [
+            discover_mosque(engine, mosque_id, candidate_root=root, horizon_days=horizon_days)
+        ]
+    else:
+        outcomes = run_discovery(engine, candidate_root=root, horizon_days=horizon_days)
+    for o in outcomes:
+        typer.echo(f"{o.mosque_id}: outcome={o.outcome} platform={o.platform}")
+    typer.echo(f"Discovered {len(outcomes)} mosque(s)")
 
 
 if __name__ == "__main__":
