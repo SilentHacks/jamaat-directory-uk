@@ -1,0 +1,32 @@
+{
+  "format_version": "1.0",
+  "attribution": "MuslimsInBritain.org",
+  "mosques": [
+    {
+      "external_id": "mib-1",
+      "name": "Aberdeen Mosque and Islamic Centre",
+      "aliases": [],
+      "address_line1": "164-168 Spital",
+      "address_line2": null,
+      "city": "Aberdeen City",
+      "postcode": "AB24 3JD",
+      "country": "GB",
+      "latitude": 57.1609160759,
+      "longitude": -2.1007543802,
+      "website_url": "http://www.aberdeenmosque.org"
+    },
+    {
+      "external_id": "mib-2",
+      "name": "No Website Masjid",
+      "aliases": ["Backup Name"],
+      "address_line1": "1 High Street",
+      "address_line2": "Floor 2",
+      "city": "Leeds",
+      "postcode": "LS1 1AA",
+      "country": "GB",
+      "latitude": 53.8000,
+      "longitude": -1.5491,
+      "website_url": null
+    }
+  ]
+}

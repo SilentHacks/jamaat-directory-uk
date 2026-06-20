@@ -1,0 +1,26 @@
+[
+  {
+    "id": "masjid-e-umar-leicester",
+    "name": "Masjid-e-Umar",
+    "aliases": ["Umar Mosque"],
+    "address": "1 Evington Road",
+    "city": "Leicester",
+    "postcode": "LE5 3SD",
+    "country": "GB",
+    "lat": 52.6225,
+    "lng": -1.1106,
+    "website_url": "https://example.org"
+  },
+  {
+    "id": "east-london-mosque",
+    "name": "East London Mosque",
+    "aliases": [],
+    "address": "82-92 Whitechapel Road",
+    "city": "London",
+    "postcode": "E1 1JQ",
+    "country": "GB",
+    "lat": 51.5174,
+    "lng": -0.0654,
+    "website_url": null
+  }
+]
