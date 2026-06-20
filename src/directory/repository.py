@@ -253,3 +253,36 @@ def update_mosque_website(session: Session, mosque_id: str, website_url: str | N
         return
     m.website_url = website_url
     m.updated_at = func.now()
+
+
+def create_or_update_source(
+    session: Session,
+    *,
+    source_id: str,
+    mosque_id: str,
+    url: str | None,
+    platform: str | None,
+    shape: str | None,
+    config: str | None,
+    requires_js: bool,
+    triage_status: str,
+) -> None:
+    src = session.get(Source, source_id)
+    if src is None:
+        src = Source(id=source_id, mosque_id=mosque_id)
+        session.add(src)
+    src.mosque_id = mosque_id
+    src.url = url
+    src.platform = platform
+    src.shape = shape
+    src.config = config
+    src.requires_js = 1 if requires_js else 0
+    src.triage_status = triage_status
+
+
+def mosques_for_discovery(session: Session) -> list[Mosque]:
+    return list(
+        session.scalars(
+            select(Mosque).where(Mosque.website_url.is_not(None)).order_by(Mosque.id)
+        )
+    )
