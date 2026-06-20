@@ -1,5 +1,10 @@
+import difflib
 import re
+import unicodedata
+from dataclasses import dataclass
 from datetime import date
+
+from directory.domain import Prayer
 
 _ARABIC_INDIC = str.maketrans(
     "٠١٢٣٤٥٦٧٨٩"
@@ -98,3 +103,97 @@ def parse_date(raw: str | None, *, year: int, month: int | None = None) -> date 
         return _safe_date(year, month, int(m.group(1)))
 
     return None
+
+
+_PUNCT_REMOVE_RE = re.compile(r"[''\.()]")
+_PUNCT_SPACE_RE = re.compile(r"[-/]")
+
+_PRAYER_SYNONYMS: dict[Prayer, set[str]] = {
+    Prayer.FAJR: {
+        "fajr", "fajar", "fadjr", "fjr", "subh", "صلاة الفجر",
+        "الفجر", "فجر"
+    },
+    Prayer.DHUHR: {
+        "dhuhr", "zuhr", "duhr", "zohr", "zuhar", "duhar", "zuhur",
+        "الظهر", "ظهر"
+    },
+    Prayer.ASR: {"asr", "asar", "العصر", "عصر"},
+    Prayer.MAGHRIB: {"maghrib", "magrib", "maghreb", "mughrib", "المغرب", "مغرب"},
+    Prayer.ISHA: {"isha", "esha", "ishaa", "eshaa", "isyak", "العشاء", "عشاء"},
+    Prayer.JUMUAH: {
+        "jumuah", "jumma", "jummah", "juma", "jumah", "jumua",
+        "friday", "الجمعة", "جمعة"
+    },
+}
+
+_KIND_SYNONYMS: dict[str, set[str]] = {
+    "jamaah": {
+        "jamaah", "jamaat", "iqamah", "iqaamah", "iqama", "iqamat",
+        "iqaama", "congregation", "salah", "salat", "prayer",
+    },
+    "begin": {"begin", "begins", "start", "starts", "adhan", "athan", "azan", "beginning"},
+}
+
+
+def normalize_token(raw: str) -> str:
+    s = unicodedata.normalize("NFKD", str(raw))
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    s = s.lower()
+    s = _PUNCT_REMOVE_RE.sub("", s)
+    s = _PUNCT_SPACE_RE.sub(" ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def _build_lookup(synonyms: dict) -> dict[str, object]:
+    out: dict[str, object] = {}
+    for key, words in synonyms.items():
+        for w in words:
+            out[normalize_token(w)] = key
+    return out
+
+
+_PRAYER_LOOKUP = _build_lookup(_PRAYER_SYNONYMS)
+_KIND_LOOKUP = _build_lookup(_KIND_SYNONYMS)
+
+
+@dataclass
+class PrayerMatch:
+    prayer: Prayer | None
+    confidence: float
+    fuzzy: bool
+
+
+@dataclass
+class KindMatch:
+    kind: str | None
+    confidence: float
+    fuzzy: bool
+
+
+def _resolve(raw: str, lookup: dict) -> tuple[object | None, float, bool]:
+    norm = normalize_token(raw)
+    if not norm:
+        return None, 0.0, False
+    if norm in lookup:
+        return lookup[norm], 1.0, False
+    words = norm.split()
+    for w in words:
+        if w in lookup:
+            return lookup[w], 1.0, False
+    candidates = list(lookup)
+    for token in [norm, *words]:
+        close = difflib.get_close_matches(token, candidates, n=1, cutoff=0.8)
+        if close:
+            return lookup[close[0]], 0.6, True
+    return None, 0.0, False
+
+
+def resolve_prayer(raw: str) -> PrayerMatch:
+    value, conf, fuzzy = _resolve(raw, _PRAYER_LOOKUP)
+    return PrayerMatch(value, conf, fuzzy)  # type: ignore[arg-type]
+
+
+def resolve_kind(raw: str) -> KindMatch:
+    value, conf, fuzzy = _resolve(raw, _KIND_LOOKUP)
+    return KindMatch(value, conf, fuzzy)  # type: ignore[arg-type]
