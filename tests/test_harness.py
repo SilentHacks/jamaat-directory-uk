@@ -1,0 +1,63 @@
+from types import SimpleNamespace
+
+import pytest
+
+from directory.ingest.harness import OpenCodeHarness, get_harness, register_harness
+
+
+def test_opencode_returns_stdout_on_success():
+    seen = {}
+
+    def fake_runner(cmd, *, capture_output, text, timeout):
+        seen["cmd"] = cmd
+        seen["timeout"] = timeout
+        return SimpleNamespace(returncode=0, stdout='{"shape":"rules"}', stderr="")
+
+    res = OpenCodeHarness(runner=fake_runner, timeout=42.0).run("do it", model="cheap/model")
+
+    assert res.ok is True
+    assert res.text == '{"shape":"rules"}'
+    assert res.model == "cheap/model"
+    assert res.error is None
+    assert seen["cmd"] == ["opencode", "run", "-m", "cheap/model", "do it"]
+    assert seen["timeout"] == 42.0
+
+
+def test_opencode_reports_nonzero_exit():
+    def fake_runner(cmd, **kwargs):
+        return SimpleNamespace(returncode=1, stdout="", stderr="boom")
+
+    res = OpenCodeHarness(runner=fake_runner).run("p", model="m")
+    assert res.ok is False
+    assert res.error == "boom"
+    assert res.text == ""
+
+
+def test_opencode_catches_subprocess_error():
+    def fake_runner(cmd, **kwargs):
+        raise OSError("opencode: not found")
+
+    res = OpenCodeHarness(runner=fake_runner).run("p", model="m")
+    assert res.ok is False
+    assert "OSError" in res.error
+
+
+def test_get_harness_default_is_opencode():
+    h = get_harness()
+    assert h.name == "opencode"
+
+
+def test_get_harness_unknown_raises():
+    with pytest.raises(ValueError):
+        get_harness("does-not-exist")
+
+
+def test_register_harness_adds_a_client():
+    class FakeCls:
+        name = "fake"
+
+        def run(self, prompt, *, model):  # pragma: no cover - not called here
+            raise NotImplementedError
+
+    register_harness("fake-task1", FakeCls)
+    assert get_harness("fake-task1").name == "fake"
