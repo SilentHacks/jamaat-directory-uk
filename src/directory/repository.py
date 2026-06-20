@@ -170,6 +170,9 @@ def get_source(session: Session, source_id: str) -> Source | None:
 def replace_source_occurrences(
     session: Session, source_id: str, mosque_id: str, rows: list
 ) -> int:
+    # Deletes by source_id then re-inserts. Assumes one source per mosque per
+    # (date, prayer, session_idx); overlapping horizons from multiple sources
+    # on the same mosque would collide on the Occurrence primary key.
     session.execute(delete(Occurrence).where(Occurrence.source_id == source_id))
     for r in rows:
         session.add(

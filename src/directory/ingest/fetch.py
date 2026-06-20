@@ -32,9 +32,9 @@ def fetch(
     timeout: float = 20.0,
 ) -> FetchResult:
     headers = {"User-Agent": _UA}
-    if etag:
+    if etag is not None:
         headers["If-None-Match"] = etag
-    if last_modified:
+    if last_modified is not None:
         headers["If-Modified-Since"] = last_modified
 
     owns_client = client is None

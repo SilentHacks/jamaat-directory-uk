@@ -111,7 +111,7 @@ def materialize_rules(
         for rule in spec.rules:
             if rule.fixed:
                 t = parse_time(rule.fixed)
-            elif rule.offset_min is not None and begin_lookup:
+            elif rule.offset_min is not None and begin_lookup is not None:
                 begin = begin_lookup.get((iso, rule.prayer.value))
                 t = _apply_offset(begin, rule.offset_min) if begin else None
             else:

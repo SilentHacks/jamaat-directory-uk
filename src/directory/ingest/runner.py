@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 from directory import repository as repo
 from directory.db import session_scope
@@ -60,7 +60,7 @@ def extract_source(
     result = extract(fetched.html, config, year=today.year, month=today.month)
     rows = materialize(result, config, horizon_start=today, horizon_end=horizon_end)
     gate = run_gates(config, result, rows, html_text=fetched.html)
-    now = datetime.now().isoformat(timespec="seconds")
+    now = datetime.now(tz=UTC).isoformat(timespec="seconds")
 
     if gate.lane == "auto_accept":
         with session_scope(engine) as s:

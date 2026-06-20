@@ -38,7 +38,7 @@ def lint_config(config: SourceConfig) -> list[str]:
             problems.append("grid shape has no columns")
         else:
             for col in grid.columns:
-                if col.kind == "jamaah" and col.prayer is None and config.shape != "rules":
+                if col.kind == "jamaah" and col.prayer is None:
                     problems.append(f"jamaah column without prayer: {col!r}")
     return problems
 

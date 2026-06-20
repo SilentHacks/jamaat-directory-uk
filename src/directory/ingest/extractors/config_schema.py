@@ -45,6 +45,9 @@ class JumuahSpec(BaseModel):
 class RuleSpec(BaseModel):
     prayer: Prayer
     fixed: str | None = None  # "HH:MM"
+    # NOTE: offset_min is NOT wired in Phase 2. The "rules" shape yields no
+    # cells, so no scraped begin time is fed to offset rules; offset resolution
+    # is a Phase 3 concern.
     offset_min: int | None = None  # minutes after a scraped begin time
 
 
