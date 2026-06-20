@@ -3,7 +3,15 @@ from fastapi.testclient import TestClient
 
 from directory.api.app import create_app
 from directory.api.deps import get_engine
-from directory.config import Settings, get_settings
+from directory.config import get_settings
+
+
+@pytest.fixture(autouse=True)
+def _isolate_settings(monkeypatch):
+    monkeypatch.delenv("DIRECTORY_ADMIN_API_KEY", raising=False)
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
 @pytest.fixture
@@ -21,10 +29,7 @@ def test_health_public(client):
 
 
 def test_admin_503_when_unconfigured(client):
-    c, app = client
-    app.dependency_overrides[get_settings] = lambda: Settings(admin_api_key=None)
-    # require_admin calls get_settings() directly, so patch via cache clear:
-    get_settings.cache_clear()
+    c, _ = client
     r = c.get("/v1/admin/sources")
     assert r.status_code == 503
 
@@ -37,4 +42,3 @@ def test_admin_requires_key(client, monkeypatch):
     ok = c.get("/v1/admin/sources", headers={"X-API-Key": "secret"})
     assert ok.status_code == 200
     assert ok.json() == []
-    get_settings.cache_clear()
