@@ -40,6 +40,22 @@ runs the quality gates, and upserts `occurrence` rows. A source that breaks
 (0 rows or failed gates) is flagged `needs_reauthor` and keeps its last-known
 data rather than being wiped.
 
+### Discovery (one-time, deterministic, £0)
+
+Resolve where each mosque's timetable lives and author a config for the known
+platforms — no AI, no live navigation on the daily path:
+
+```bash
+directory validate-websites        # verify-or-empty the known websites
+directory discover                 # liveness → platform detect → gather
+directory discover --mosque-id wp  # one mosque
+```
+
+Platform matches (WordPress prayer tables, Mawaqit, MyLocalMasjid, Masjidbox)
+are authored and immediately verified through the extraction gates. Everything
+else has its timetable candidates gathered and cached under `data/candidates/`
+for the Phase-4 AI authoring step.
+
 Interactive API docs at `/docs`. Browse site at `/`.
 
 ## API
