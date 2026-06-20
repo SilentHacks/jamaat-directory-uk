@@ -32,7 +32,7 @@ def init_db(engine: Engine) -> None:
 
 @contextmanager
 def session_scope(engine: Engine) -> Iterator[Session]:
-    factory = sessionmaker(bind=engine, future=True, expire_on_commit=False)
+    factory = sessionmaker(bind=engine, future=True)
     session = factory()
     try:
         yield session

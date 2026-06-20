@@ -32,8 +32,10 @@ def test_replace_source_occurrences_is_idempotent(engine):
         repo.replace_source_occurrences(s, "s1", "m1", rows2)
     with session_scope(engine) as s:
         got = s.query(Occurrence).all()
-    assert len(got) == 1
-    assert got[0].prayer == "dhuhr"
+        count = len(got)
+        prayer = got[0].prayer
+    assert count == 1
+    assert prayer == "dhuhr"
 
 
 def test_record_run_and_set_state(engine):
@@ -43,5 +45,7 @@ def test_record_run_and_set_state(engine):
         repo.set_source_state(s, "s1", triage_status="needs_reauthor", last_error="drift")
     with session_scope(engine) as s:
         src = repo.get_source(s, "s1")
-    assert src.triage_status == "needs_reauthor"
-    assert src.last_error == "drift"
+        status = src.triage_status
+        error = src.last_error
+    assert status == "needs_reauthor"
+    assert error == "drift"
