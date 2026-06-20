@@ -19,3 +19,9 @@ def test_env_override(monkeypatch):
     monkeypatch.setenv("DIRECTORY_ADMIN_API_KEY", "secret")
     s = Settings()
     assert s.admin_api_key == "secret"
+
+
+def test_candidate_dir_default():
+    from directory.config import Settings
+
+    assert str(Settings().candidate_dir) == "data/candidates"

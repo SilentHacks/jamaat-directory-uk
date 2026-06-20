@@ -9,7 +9,8 @@ build/
 # uv
 uv.lock.bak
 
-# Project data (never commit the DB or seed exports)
+# Project data (never commit the DB, seed exports, or candidate cache)
+data/candidates/
 data/*.db
 data/*.db-wal
 data/*.db-shm

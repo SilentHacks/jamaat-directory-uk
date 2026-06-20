@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     db_path: Path = Path("data/directory.db")
     admin_api_key: str | None = None
     snapshot_horizon_days: int = 45
+    candidate_dir: Path = Path("data/candidates")
 
     @property
     def database_url(self) -> str:
