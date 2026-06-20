@@ -3,7 +3,7 @@ from contextlib import contextmanager
 from importlib import resources
 from pathlib import Path
 
-from sqlalchemy import Engine, create_engine, event
+from sqlalchemy import Engine, create_engine, event, text
 from sqlalchemy.orm import Session, sessionmaker
 
 
@@ -22,8 +22,12 @@ def make_engine(database_url: str) -> Engine:
 
 def init_db(engine: Engine) -> None:
     sql = resources.files("directory").joinpath("schema.sql").read_text()
-    with engine.connect() as conn:
-        conn.connection.executescript(sql)  # type: ignore[attr-defined]
+    # Strip line comments so a ';' inside a '-- ...' comment is invisible to the split.
+    clean = "\n".join(line.split("--")[0] for line in sql.splitlines())
+    with engine.begin() as conn:
+        for statement in clean.split(";"):
+            if statement.strip():
+                conn.execute(text(statement))
 
 
 @contextmanager

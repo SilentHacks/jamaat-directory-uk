@@ -1,3 +1,4 @@
+import pytest
 from sqlalchemy import text
 
 from directory.db import init_db, make_engine, session_scope
@@ -32,3 +33,15 @@ def test_session_scope_commits(tmp_path):
     with session_scope(engine) as s:
         count = s.execute(text("SELECT count(*) FROM mosque")).scalar()
     assert count == 1
+
+
+def test_foreign_keys_enforced(tmp_path):
+    from sqlalchemy import text
+    from sqlalchemy.exc import IntegrityError
+    engine = make_engine(f"sqlite:///{tmp_path/'t.db'}")
+    init_db(engine)
+    with pytest.raises(IntegrityError):
+        with session_scope(engine) as s:
+            s.execute(text(
+                "INSERT INTO source (id, mosque_id) VALUES ('s1', 'missing')"
+            ))
