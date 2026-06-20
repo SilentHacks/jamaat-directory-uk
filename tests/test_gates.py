@@ -62,6 +62,15 @@ def test_empty_occurrences_auto_rejects():
     assert run_gates(GRID_CFG, ExtractionResult(), []).lane == "auto_reject"
 
 
+def test_constant_columns_no_begin_routes_to_review():
+    occ = []
+    for day in range(21, 29):  # 8 distinct dates → >= 7
+        occ += _day(f"2026-06-{day}", ["05:00", "13:30", "18:30", "21:30", "23:00"])
+    res = run_gates(GRID_CFG, ExtractionResult(), occ)
+    assert res.lane == "review"
+    assert any("constant" in r for r in res.reasons)
+
+
 def test_lint_flags_jamaah_column_without_prayer():
     bad = SourceConfig.from_json(
         '{"shape":"html_table","grid":{"columns":[{"kind":"jamaah","index":1}]}}'
