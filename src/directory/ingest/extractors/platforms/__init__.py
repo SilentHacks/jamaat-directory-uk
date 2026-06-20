@@ -1,2 +1,6 @@
 # Import detector modules for their register() side effects. Order = registry priority.
-from directory.ingest.extractors.platforms import mawaqit, wp_prayer  # noqa: F401,E402
+from directory.ingest.extractors.platforms import (  # noqa: F401,E402
+    iframe_widgets,
+    mawaqit,
+    wp_prayer,
+)
