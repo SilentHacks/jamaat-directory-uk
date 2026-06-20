@@ -1,0 +1,53 @@
+import pytest
+
+from directory.domain import Prayer
+from directory.ingest.extractors.config_schema import SourceConfig
+
+
+def test_html_table_roundtrips_through_json():
+    raw = """
+    {
+      "shape": "html_table",
+      "grid": {
+        "table_selector": "table.times",
+        "transpose": false,
+        "date": {"index": 0, "format": "day_only"},
+        "columns": [
+          {"kind": "begin", "prayer": "fajr", "index": 1, "header_seen": "Fajr Begins"},
+          {"kind": "jamaah", "prayer": "fajr", "index": 2, "header_seen": "Fajr Iqamah"}
+        ]
+      }
+    }
+    """
+    cfg = SourceConfig.from_json(raw)
+    assert cfg.shape == "html_table"
+    assert cfg.grid.columns[0].prayer == Prayer.FAJR
+    assert cfg.grid.columns[1].kind == "jamaah"
+    # to_json drops null fields and re-parses identically
+    again = SourceConfig.from_json(cfg.to_json())
+    assert again.grid.date.index == 0
+
+
+def test_jumuah_fixed_sessions_parse():
+    cfg = SourceConfig.from_json(
+        '{"shape":"html_table","grid":{"columns":[]},'
+        '"jumuah":{"source":"fixed","sessions":['
+        '{"label":"1st Jumu\\u2019ah","time":"13:00"},'
+        '{"label":"2nd Jumu\\u2019ah","time":"13:45"}]}}'
+    )
+    assert cfg.jumuah.source == "fixed"
+    assert [s.time for s in cfg.jumuah.sessions] == ["13:00", "13:45"]
+
+
+def test_html_table_without_grid_is_rejected():
+    with pytest.raises(ValueError):
+        SourceConfig.from_json('{"shape":"html_table"}')
+
+
+def test_rules_shape_requires_rules_block():
+    with pytest.raises(ValueError):
+        SourceConfig.from_json('{"shape":"rules"}')
+    ok = SourceConfig.from_json(
+        '{"shape":"rules","rules":{"rules":[{"prayer":"dhuhr","fixed":"13:30"}]}}'
+    )
+    assert ok.rules.rules[0].prayer == Prayer.DHUHR
