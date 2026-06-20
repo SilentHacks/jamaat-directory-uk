@@ -1,10 +1,16 @@
 from dataclasses import dataclass
+from datetime import date
+from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
 import httpx
 from bs4 import BeautifulSoup
 
+from directory import repository as repo
+from directory.db import session_scope
+from directory.ingest.extractors.platforms import base as platforms
 from directory.ingest.fetch import fetch
+from directory.ingest.runner import extract_source
 
 _UA = "jamaat-directory-uk/0.1 (+https://github.com/SilentHacks/jamaat-directory-uk)"
 
@@ -124,3 +130,105 @@ def gather_candidates(
 
     candidates.sort(key=lambda c: c.score, reverse=True)
     return CandidateBundle(mosque_id, base_url, candidates[:max_candidates])
+
+
+@dataclass
+class DiscoverOutcome:
+    mosque_id: str
+    outcome: str
+    platform: str | None
+    detail: str | None = None
+
+
+def discover_mosque(
+    engine,
+    mosque_id: str,
+    *,
+    fetcher=fetch,
+    client: httpx.Client | None = None,
+    candidate_root: Path,
+    today: date | None = None,
+    horizon_days: int = 60,
+) -> DiscoverOutcome:
+    with session_scope(engine) as s:
+        mosque = repo.get_mosque(s, mosque_id)
+        website = mosque.website_url if mosque else None
+    if not website:
+        return DiscoverOutcome(mosque_id, "no_website", None)
+
+    live = check_liveness(website, client=client)
+    if not live.alive:
+        with session_scope(engine) as s:
+            repo.update_mosque_website(s, mosque_id, None)
+        return DiscoverOutcome(mosque_id, "dead", None, detail=live.error)
+
+    home_url = live.final_url or website
+    fetched = fetcher(home_url, client=client)
+    homepage_html = fetched.html or ""
+
+    match = platforms.detect_platform(homepage_html, home_url) if homepage_html else None
+    if match is not None:
+        with session_scope(engine) as s:
+            repo.create_or_update_source(
+                s,
+                source_id=mosque_id,
+                mosque_id=mosque_id,
+                url=match.url,
+                platform=match.platform,
+                shape=match.config.shape,
+                config=match.config.to_json(),
+                requires_js=match.requires_js,
+                triage_status="authored",
+            )
+        result = extract_source(
+            engine, mosque_id, fetcher=fetcher, today=today, horizon_days=horizon_days
+        )
+        return DiscoverOutcome(mosque_id, result.triage_status, match.platform)
+
+    # Local import breaks the discover <-> candidate_store cycle: candidate_store
+    # imports Candidate/CandidateBundle from this module at import time.
+    from directory.ingest.candidate_store import save_bundle
+
+    bundle = gather_candidates(
+        mosque_id, home_url, homepage_html=homepage_html, client=client, fetcher=fetcher
+    )
+    save_bundle(bundle, root=candidate_root)
+    best_url = bundle.candidates[0].url if bundle.candidates else None
+    with session_scope(engine) as s:
+        repo.create_or_update_source(
+            s,
+            source_id=mosque_id,
+            mosque_id=mosque_id,
+            url=best_url,
+            platform=None,
+            shape=None,
+            config=None,
+            requires_js=False,
+            triage_status="candidate",
+        )
+    return DiscoverOutcome(mosque_id, "candidate", None)
+
+
+def run_discovery(
+    engine,
+    *,
+    fetcher=fetch,
+    client: httpx.Client | None = None,
+    candidate_root: Path,
+    today: date | None = None,
+    horizon_days: int = 60,
+) -> list[DiscoverOutcome]:
+    with session_scope(engine) as s:
+        ids = [m.id for m in repo.mosques_for_discovery(s)]
+    return [
+        discover_mosque(
+            engine,
+            mid,
+            fetcher=fetcher,
+            client=client,
+            candidate_root=candidate_root,
+            today=today,
+            horizon_days=horizon_days,
+        )
+        for mid in ids
+    ]
