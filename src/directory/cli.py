@@ -5,6 +5,7 @@ import typer
 from directory.config import Settings
 from directory.db import init_db, make_engine
 from directory.ingest.mib import clean_mib_export, write_seed_file
+from directory.ingest.runner import extract_source, run_extract
 from directory.ingest.seed import load_seed_file, seed_database
 
 app = typer.Typer(help="UK Mosque Jamaat Directory CLI")
@@ -53,6 +54,22 @@ def serve(host: str = "127.0.0.1", port: int = 8000) -> None:
     import uvicorn
 
     uvicorn.run("directory.api.app:app", host=host, port=port)
+
+
+@app.command()
+def extract(
+    source_id: str | None = typer.Option(None, "--source-id", help="Extract one source"),  # noqa: B008
+    horizon_days: int = typer.Option(60, "--horizon-days", help="Days of occurrences"),  # noqa: B008
+) -> None:
+    """Run the deterministic daily extract over authored sources."""
+    engine = _engine_from_env()
+    if source_id is not None:
+        outcomes = [extract_source(engine, source_id, horizon_days=horizon_days)]
+    else:
+        outcomes = run_extract(engine, horizon_days=horizon_days)
+    for o in outcomes:
+        typer.echo(f"{o.source_id}: lane={o.lane} status={o.triage_status} rows={o.rows_written}")
+    typer.echo(f"Processed {len(outcomes)} source(s)")
 
 
 if __name__ == "__main__":

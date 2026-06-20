@@ -1,10 +1,10 @@
 import json
 import math
 
-from sqlalchemy import exists, select
+from sqlalchemy import delete, exists, select
 from sqlalchemy.orm import Session
 
-from directory.models import Mosque, Occurrence
+from directory.models import ExtractorRun, Mosque, Occurrence, Source
 
 _KM_PER_DEG_LAT = 111.0
 
@@ -148,3 +148,92 @@ def query_times(
 
 def iter_all_mosques(session: Session) -> list[Mosque]:
     return list(session.scalars(select(Mosque).order_by(Mosque.id)))
+
+
+def authored_sources(session: Session) -> list[Source]:
+    stmt = (
+        select(Source)
+        .where(
+            Source.triage_status.in_(("authored", "review", "needs_reauthor")),
+            Source.url.is_not(None),
+            Source.config.is_not(None),
+        )
+        .order_by(Source.id)
+    )
+    return list(session.scalars(stmt))
+
+
+def get_source(session: Session, source_id: str) -> Source | None:
+    return session.get(Source, source_id)
+
+
+def replace_source_occurrences(
+    session: Session, source_id: str, mosque_id: str, rows: list
+) -> int:
+    # Deletes by source_id then re-inserts. Assumes one source per mosque per
+    # (date, prayer, session_idx); overlapping horizons from multiple sources
+    # on the same mosque would collide on the Occurrence primary key.
+    session.execute(delete(Occurrence).where(Occurrence.source_id == source_id))
+    for r in rows:
+        session.add(
+            Occurrence(
+                mosque_id=mosque_id,
+                date=r.date,
+                prayer=r.prayer,
+                session_idx=r.session_idx,
+                jamaah_time=r.jamaah_time,
+                begin_time=r.begin_time,
+                label=r.label,
+                source_id=source_id,
+            )
+        )
+    return len(rows)
+
+
+def record_extractor_run(
+    session: Session,
+    source_id: str,
+    *,
+    ok: bool,
+    rows_written: int,
+    error: str | None = None,
+) -> None:
+    session.add(
+        ExtractorRun(
+            source_id=source_id,
+            ok=1 if ok else 0,
+            rows_written=rows_written,
+            error=error,
+        )
+    )
+
+
+def set_source_state(
+    session: Session,
+    source_id: str,
+    *,
+    triage_status: str | None = None,
+    confidence: float | None = None,
+    review_reason: str | None = None,
+    last_status: str | None = None,
+    last_error: str | None = None,
+    last_fetched_at: str | None = None,
+    source_html_hash: str | None = None,
+) -> None:
+    src = session.get(Source, source_id)
+    if src is None:
+        return
+    if triage_status is not None:
+        src.triage_status = triage_status
+    if confidence is not None:
+        src.confidence = confidence
+    if review_reason is not None:
+        src.review_reason = review_reason
+    if last_status is not None:
+        src.last_status = last_status
+    if last_error is not None:
+        src.last_error = last_error
+    if last_fetched_at is not None:
+        src.last_fetched_at = last_fetched_at
+    if source_html_hash is not None:
+        src.source_html_hash = source_html_hash
