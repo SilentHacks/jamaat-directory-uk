@@ -55,11 +55,17 @@ class RulesSpec(BaseModel):
     rules: list[RuleSpec] = Field(default_factory=list)
 
 
+class WidgetSpec(BaseModel):
+    platform: str
+    data_url: str | None = None
+
+
 class SourceConfig(BaseModel):
     shape: Shape
     grid: GridSpec | None = None
     jumuah: JumuahSpec | None = None
     rules: RulesSpec | None = None
+    widget: WidgetSpec | None = None
 
     @model_validator(mode="after")
     def _check_shape(self) -> "SourceConfig":
@@ -67,6 +73,8 @@ class SourceConfig(BaseModel):
             raise ValueError(f"shape {self.shape!r} requires a grid spec")
         if self.shape == "rules" and self.rules is None:
             raise ValueError("shape 'rules' requires a rules spec")
+        if self.shape == "widget" and self.widget is None:
+            raise ValueError("shape 'widget' requires a widget spec")
         return self
 
     @classmethod

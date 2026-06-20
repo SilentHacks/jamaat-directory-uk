@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date
 
@@ -28,6 +29,14 @@ def _prefer_pm(prayer: Prayer | None) -> bool | None:
     if prayer is None:
         return None
     return prayer != Prayer.FAJR
+
+
+WidgetExtractor = Callable[..., ExtractionResult]
+WIDGET_EXTRACTORS: dict[str, WidgetExtractor] = {}
+
+
+def register_widget(platform: str, fn: WidgetExtractor) -> None:
+    WIDGET_EXTRACTORS[platform] = fn
 
 
 def extract_html_table(
@@ -115,4 +124,10 @@ def extract(
         return extract_html_repeated(html, config, year=year, month=month)
     if config.shape == "rules":
         return ExtractionResult()
+    if config.shape == "widget":
+        platform = config.widget.platform
+        fn = WIDGET_EXTRACTORS.get(platform)
+        if fn is None:
+            raise ValueError(f"no widget extractor for platform: {platform!r}")
+        return fn(html, year=year, month=month)
     raise ValueError(f"unsupported shape: {config.shape!r}")
