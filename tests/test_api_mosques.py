@@ -39,3 +39,13 @@ def test_near_requires_radius(client):
 def test_detail_and_404(client):
     assert client.get("/v1/mosques/leic").json()["name"] == "Leicester Masjid"
     assert client.get("/v1/mosques/nope").status_code == 404
+
+
+def test_malformed_bbox_returns_422(client):
+    r = client.get("/v1/mosques", params={"bbox": "0,0,abc,1"})
+    assert r.status_code == 422
+
+
+def test_malformed_near_returns_422(client):
+    r = client.get("/v1/mosques", params={"near": "abc,1", "radius_km": 5})
+    assert r.status_code == 422

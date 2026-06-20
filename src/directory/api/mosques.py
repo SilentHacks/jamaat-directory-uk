@@ -12,7 +12,10 @@ router = APIRouter(prefix="/mosques", tags=["mosques"])
 def _parse_bbox(bbox: str | None) -> tuple[float, float, float, float] | None:
     if bbox is None:
         return None
-    parts = [float(x) for x in bbox.split(",")]
+    try:
+        parts = [float(x) for x in bbox.split(",")]
+    except ValueError:
+        raise HTTPException(422, "bbox must be 'min_lng,min_lat,max_lng,max_lat'") from None
     if len(parts) != 4:
         raise HTTPException(422, "bbox must be 'min_lng,min_lat,max_lng,max_lat'")
     return (parts[0], parts[1], parts[2], parts[3])
@@ -21,7 +24,10 @@ def _parse_bbox(bbox: str | None) -> tuple[float, float, float, float] | None:
 def _parse_near(near: str | None) -> tuple[float, float] | None:
     if near is None:
         return None
-    parts = [float(x) for x in near.split(",")]
+    try:
+        parts = [float(x) for x in near.split(",")]
+    except ValueError:
+        raise HTTPException(422, "near must be 'lat,lng'") from None
     if len(parts) != 2:
         raise HTTPException(422, "near must be 'lat,lng'")
     return (parts[0], parts[1])
