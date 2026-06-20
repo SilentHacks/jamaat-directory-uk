@@ -4,9 +4,10 @@ from sqlalchemy import Engine, select
 from directory.api.deps import get_engine
 from directory.config import get_settings
 from directory.db import session_scope
+from directory.ingest.discover import discover_mosque
 from directory.ingest.runner import extract_source
 from directory.models import Source
-from directory.repository import get_source, iter_all_mosques
+from directory.repository import get_mosque, get_source, iter_all_mosques
 
 router = APIRouter(tags=["ops"])
 
@@ -38,6 +39,24 @@ def refresh_source(source_id: str, engine: Engine = Depends(get_engine)):  # noq
         "triage_status": out.triage_status,
         "rows_written": out.rows_written,
         "error": out.error,
+    }
+
+
+@router.post(
+    "/admin/mosques/{mosque_id}/discover", dependencies=[Depends(require_admin)]
+)  # noqa: B008
+def discover_mosque_endpoint(mosque_id: str, engine: Engine = Depends(get_engine)):  # noqa: B008
+    with session_scope(engine) as s:
+        if get_mosque(s, mosque_id) is None:
+            raise HTTPException(404, "mosque not found")
+    out = discover_mosque(
+        engine, mosque_id, candidate_root=get_settings().candidate_dir
+    )
+    return {
+        "mosque_id": out.mosque_id,
+        "outcome": out.outcome,
+        "platform": out.platform,
+        "detail": out.detail,
     }
 
 
