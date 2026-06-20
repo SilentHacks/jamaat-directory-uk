@@ -1,5 +1,7 @@
 # UK Mosque Jamaat Directory
 
+[![CI](https://github.com/SilentHacks/jamaat-directory-uk/actions/workflows/ci.yml/badge.svg)](https://github.com/SilentHacks/jamaat-directory-uk/actions/workflows/ci.yml)
+
 A lean backend that records UK mosque **jamaat** (congregational prayer)
 timetables and serves them via a JSON API and a small browse site. It is the
 data layer feeding **Sirat**, a journey-planning app that routes users past
