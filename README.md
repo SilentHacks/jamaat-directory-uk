@@ -26,6 +26,20 @@ uv run directory seed --input data/seed/mosques.json         # load mosque list
 uv run directory serve                                       # http://127.0.0.1:8000
 ```
 
+### Daily extract (deterministic, zero AI)
+
+Once sources are authored (Phase 3), refresh the rolling timetable horizon:
+
+```bash
+directory extract                 # all authored sources, 60-day horizon
+directory extract --source-id s1  # one source
+```
+
+The daily run fetches each source's known URL, applies its cached `config`,
+runs the quality gates, and upserts `occurrence` rows. A source that breaks
+(0 rows or failed gates) is flagged `needs_reauthor` and keeps its last-known
+data rather than being wiped.
+
 Interactive API docs at `/docs`. Browse site at `/`.
 
 ## API
