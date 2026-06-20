@@ -37,6 +37,7 @@ def extract_source(
     horizon_days: int = 60,
     fetcher=fetch,
     renderer=None,
+    accept_review: bool = False,
 ) -> ExtractOutcome:
     today = today or date.today()
     horizon_end = today + timedelta(days=horizon_days)
@@ -62,7 +63,8 @@ def extract_source(
     gate = run_gates(config, result, rows, html_text=fetched.html)
     now = datetime.now(tz=UTC).isoformat(timespec="seconds")
 
-    if gate.lane == "auto_accept":
+    activate = gate.lane == "auto_accept" or (gate.lane == "review" and accept_review)
+    if activate:
         with session_scope(engine) as s:
             n = repo.replace_source_occurrences(s, source_id, mosque_id, rows)
             repo.set_source_state(
