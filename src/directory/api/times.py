@@ -97,5 +97,5 @@ def snapshot(response: Response, engine: Engine = Depends(get_engine)):  # noqa:
         "mosques": payload_mosques,
     }
     etag = hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()[:16]
-    response.headers["ETag"] = etag
+    response.headers["ETag"] = f'"{etag}"'
     return body

@@ -35,3 +35,24 @@ def test_detail_page(client):
 
 def test_detail_404(client):
     assert client.get("/mosque/nope").status_code == 404
+
+
+def test_javascript_website_not_rendered_as_link(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from directory.api.app import create_app
+    from directory.api.deps import get_engine
+    from directory.db import init_db, make_engine, session_scope
+    from directory.models import Mosque
+
+    engine = make_engine(f"sqlite:///{tmp_path / 't.db'}")
+    init_db(engine)
+    with session_scope(engine) as s:
+        s.add(Mosque(id="x", name="Evil Masjid", lat=1.0, lng=2.0,
+                     website_url="javascript:alert(1)"))
+    app = create_app()
+    app.dependency_overrides[get_engine] = lambda: engine
+    client = TestClient(app)
+    r = client.get("/mosque/x")
+    assert r.status_code == 200
+    assert 'href="javascript:' not in r.text

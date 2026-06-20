@@ -10,7 +10,8 @@
 <ul>
   <li>Coordinates: {{ "%.4f"|format(m.lat) }}, {{ "%.4f"|format(m.lng) }}</li>
   <li>Website:
-    {% if m.website_url %}<a href="{{ m.website_url }}" rel="nofollow noopener">{{ m.website_url }}</a>
+    {% if m.website_url and m.website_url.startswith(('http://', 'https://')) %}<a href="{{ m.website_url }}" rel="nofollow noopener">{{ m.website_url }}</a>
+    {% elif m.website_url %}{{ m.website_url }}
     {% else %}<span class="muted">not recorded</span>{% endif %}
   </li>
   <li>Status: {{ m.status }}</li>

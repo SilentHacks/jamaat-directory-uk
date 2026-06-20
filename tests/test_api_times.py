@@ -36,5 +36,7 @@ def test_times_workhorse_by_prayer(client):
 def test_snapshot_has_etag_and_counts(client):
     r = client.get("/v1/snapshot")
     assert r.status_code == 200
-    assert r.headers.get("ETag")
+    etag = r.headers.get("ETag")
+    assert etag is not None
+    assert etag.startswith('"') and etag.endswith('"')
     assert r.json()["count"] == 2

@@ -5,7 +5,7 @@
     <tr>
       <td><a href="/mosque/{{ m.id }}">{{ m.name }}</a></td>
       <td>{{ m.city or "" }}</td>
-      <td>{% if m.website_url %}<a href="{{ m.website_url }}" rel="nofollow noopener">site</a>{% else %}<span class="muted">—</span>{% endif %}</td>
+      <td>{% if m.website_url and m.website_url.startswith(('http://', 'https://')) %}<a href="{{ m.website_url }}" rel="nofollow noopener">site</a>{% else %}<span class="muted">—</span>{% endif %}</td>
     </tr>
   {% else %}
     <tr><td colspan="3" class="muted">No mosques found.</td></tr>
