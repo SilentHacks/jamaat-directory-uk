@@ -25,3 +25,22 @@ def test_candidate_dir_default():
     from directory.config import Settings
 
     assert str(Settings().candidate_dir) == "data/candidates"
+
+
+def test_author_settings_have_defaults_and_env_overrides(monkeypatch):
+    from directory.config import Settings, get_settings
+
+    get_settings.cache_clear()
+    s = Settings()
+    assert s.author_harness == "opencode"
+    assert s.author_model_cheap  # non-empty
+    assert s.author_model_strong
+    assert s.author_max_calls > 0
+
+    monkeypatch.setenv("DIRECTORY_AUTHOR_HARNESS", "claude-code")
+    monkeypatch.setenv("DIRECTORY_AUTHOR_MAX_CALLS", "3")
+    get_settings.cache_clear()
+    s2 = Settings()
+    assert s2.author_harness == "claude-code"
+    assert s2.author_max_calls == 3
+    get_settings.cache_clear()

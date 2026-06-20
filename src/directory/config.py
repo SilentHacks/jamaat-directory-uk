@@ -11,6 +11,10 @@ class Settings(BaseSettings):
     admin_api_key: str | None = None
     snapshot_horizon_days: int = 45
     candidate_dir: Path = Path("data/candidates")
+    author_harness: str = "opencode"
+    author_model_cheap: str = "anthropic/claude-haiku-4-5"
+    author_model_strong: str = "anthropic/claude-opus-4-8"
+    author_max_calls: int = 50
 
     @property
     def database_url(self) -> str:
