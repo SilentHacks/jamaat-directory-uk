@@ -1,5 +1,6 @@
 # src/directory/ingest/author.py
 import json
+from collections import Counter
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -9,9 +10,10 @@ from directory.db import session_scope
 from directory.ingest.candidate_store import load_bundle
 from directory.ingest.extractors.config_schema import SourceConfig
 from directory.ingest.fetch import fetch
-from directory.ingest.harness import AuthorHarness
+from directory.ingest.harness import AuthorHarness, get_harness
 from directory.ingest.prompt import build_author_prompt
 from directory.ingest.runner import extract_source
+from directory.models import Mosque
 
 
 @dataclass
@@ -140,3 +142,44 @@ def author_mosque(
             s, mosque_id, triage_status="needs_reauthor", last_status="error", last_error=detail
         )
     return AuthorOutcome(mosque_id, "needs_reauthor", detail=detail)
+
+
+def order_by_city_size(mosques: list[Mosque]) -> list[Mosque]:
+    counts = Counter(m.city for m in mosques)
+    return sorted(mosques, key=lambda m: (-counts[m.city], m.id))
+
+
+def run_authoring(
+    engine,
+    *,
+    harness: AuthorHarness | None = None,
+    harness_name: str = "opencode",
+    candidate_root: Path,
+    models: tuple[str, ...],
+    max_calls: int = 50,
+    priority=order_by_city_size,
+    today: date | None = None,
+    horizon_days: int = 60,
+    fetcher=fetch,
+    renderer=None,
+) -> list[AuthorOutcome]:
+    harness = harness or get_harness(harness_name)
+    with session_scope(engine) as s:
+        candidates = repo.candidate_sources(s)
+        mosques = [repo.get_mosque(s, c.mosque_id) for c in candidates]
+        mosques = [m for m in mosques if m is not None]
+        ordered_ids = [m.id for m in priority(mosques)]
+
+    outcomes: list[AuthorOutcome] = []
+    spent = 0
+    for mid in ordered_ids:
+        if spent >= max_calls:
+            break
+        out = author_mosque(
+            engine, mid, harness=harness, candidate_root=candidate_root, models=models,
+            today=today, horizon_days=horizon_days, fetcher=fetcher, renderer=renderer,
+        )
+        outcomes.append(out)
+        if out.outcome not in {"no_candidate", "skipped"}:
+            spent += 1
+    return outcomes
