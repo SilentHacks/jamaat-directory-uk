@@ -219,6 +219,8 @@ def set_source_state(
     last_error: str | None = None,
     last_fetched_at: str | None = None,
     source_html_hash: str | None = None,
+    authored_by: str | None = None,
+    authored_at: str | None = None,
 ) -> None:
     src = session.get(Source, source_id)
     if src is None:
@@ -237,6 +239,10 @@ def set_source_state(
         src.last_fetched_at = last_fetched_at
     if source_html_hash is not None:
         src.source_html_hash = source_html_hash
+    if authored_by is not None:
+        src.authored_by = authored_by
+    if authored_at is not None:
+        src.authored_at = authored_at
 
 
 def mosques_with_website(session: Session) -> list[Mosque]:
@@ -278,6 +284,22 @@ def create_or_update_source(
     src.config = config
     src.requires_js = 1 if requires_js else 0
     src.triage_status = triage_status
+
+
+def candidate_sources(session: Session) -> list[Source]:
+    return list(
+        session.scalars(
+            select(Source).where(Source.triage_status == "candidate").order_by(Source.id)
+        )
+    )
+
+
+def sources_in_review(session: Session) -> list[Source]:
+    return list(
+        session.scalars(
+            select(Source).where(Source.triage_status == "review").order_by(Source.id)
+        )
+    )
 
 
 def mosques_for_discovery(session: Session) -> list[Mosque]:
