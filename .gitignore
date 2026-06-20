@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+dist/
+build/
+
+# uv
+uv.lock.bak
+
+# Project data (never commit the DB or seed exports)
+data/*.db
+data/*.db-wal
+data/*.db-shm
+data/seed/*.json
+!data/seed/.gitkeep
+
+# Raw upstream data dumps (the cleaned subset is generated, not committed)
+mib_uk_ie_mosques.json
+*.raw.json
+
+# Internal planning, design, and process scratch — NEVER in the public repo
+DESIGN.md
+docs/superpowers/
+.superpowers/
+
+# Tooling
+.pytest_cache/
+.ruff_cache/
+.env
