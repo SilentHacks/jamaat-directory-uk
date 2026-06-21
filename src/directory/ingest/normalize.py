@@ -44,6 +44,30 @@ def parse_time(raw: str | None, *, prefer_pm: bool | None = None) -> str | None:
     return f"{hh:02d}:{mm:02d}"
 
 
+_OFFSET_RE = re.compile(
+    r"^\s*([+\-–−])?\s*(\d{1,3})\s*(m|min|mins|minute|minutes)?\.?\s*$", re.IGNORECASE
+)
+_MINUS = {"-", "–", "−"}
+
+
+def parse_offset(raw: str | None) -> int | None:
+    """Parse a relative time offset in minutes, e.g. ``"+5"``, ``"+10 min"``,
+    ``"-5"``. Requires an explicit sign or a minutes suffix — a bare integer is
+    too ambiguous (it could be a day number or a clock part). Returns signed
+    minutes, or None when the text is not an offset."""
+    if not raw:
+        return None
+    s = _ascii_digits(str(raw)).strip().lower()
+    m = _OFFSET_RE.match(s)
+    if not m:
+        return None
+    sign, num, unit = m.group(1), m.group(2), m.group(3)
+    if not sign and not unit:
+        return None
+    minutes = int(num)
+    return -minutes if sign in _MINUS else minutes
+
+
 _MONTH_NAMES = [
     "january", "february", "march", "april", "may", "june",
     "july", "august", "september", "october", "november", "december",
