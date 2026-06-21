@@ -1,4 +1,5 @@
 import json
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from datetime import date, timedelta
 from pathlib import Path
@@ -347,11 +348,13 @@ def run_discovery(
     today: date | None = None,
     horizon_days: int = 60,
     blocklist: frozenset[str] | None = None,
+    concurrency: int = 16,
 ) -> list[DiscoverOutcome]:
     with session_scope(engine) as s:
         ids = [m.id for m in repo.mosques_for_discovery(s)]
-    return [
-        discover_mosque(
+
+    def _one(mid: str) -> DiscoverOutcome:
+        return discover_mosque(
             engine,
             mid,
             fetcher=fetcher,
@@ -361,5 +364,7 @@ def run_discovery(
             horizon_days=horizon_days,
             blocklist=blocklist,
         )
-        for mid in ids
-    ]
+
+    # ids come back id-ordered; pool.map preserves order → deterministic results.
+    with ThreadPoolExecutor(max_workers=max(1, concurrency)) as pool:
+        return list(pool.map(_one, ids))

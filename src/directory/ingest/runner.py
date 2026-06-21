@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 
@@ -96,12 +97,17 @@ def run_extract(
     horizon_days: int = 60,
     fetcher=fetch,
     renderer=None,
+    concurrency: int = 16,
 ) -> list[ExtractOutcome]:
     with session_scope(engine) as s:
         source_ids = [src.id for src in repo.authored_sources(s)]
-    return [
-        extract_source(
-            engine, sid, today=today, horizon_days=horizon_days, fetcher=fetcher, renderer=renderer
+
+    def _one(sid: str) -> ExtractOutcome:
+        return extract_source(
+            engine, sid, today=today, horizon_days=horizon_days,
+            fetcher=fetcher, renderer=renderer,
         )
-        for sid in source_ids
-    ]
+
+    # source_ids are id-ordered; pool.map preserves order → deterministic results.
+    with ThreadPoolExecutor(max_workers=max(1, concurrency)) as pool:
+        return list(pool.map(_one, source_ids))
