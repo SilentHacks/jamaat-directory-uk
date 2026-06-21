@@ -94,6 +94,26 @@ def review_list(
 
 
 @router.get(
+    "/admin/flagged", response_class=HTMLResponse, dependencies=[Depends(require_web_admin)]
+)  # noqa: B008
+def flagged_list(
+    request: Request, flag: str = "jumuah_missing", key: str | None = None,
+    engine: Engine = Depends(get_engine),  # noqa: B008
+):
+    """Non-blocking listing of live-but-flagged sources (e.g. jumuah_missing).
+    Distinct from the review approve/reject queue — these stay authored/live."""
+    with session_scope(engine) as s:
+        items = []
+        for src in repo.sources_with_flag(s, flag):
+            m = repo.get_mosque(s, src.mosque_id)
+            items.append({"source_id": src.id, "name": m.name if m else None,
+                          "status": src.triage_status})
+        return templates.TemplateResponse(
+            request, "flagged_list.html", {"items": items, "flag": flag, "key": key or ""}
+        )
+
+
+@router.get(
     "/admin/review/{source_id}", response_class=HTMLResponse,
     dependencies=[Depends(require_web_admin)],
 )  # noqa: B008

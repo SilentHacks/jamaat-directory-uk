@@ -49,3 +49,22 @@ def test_malformed_bbox_returns_422(client):
 def test_malformed_near_returns_422(client):
     r = client.get("/v1/mosques", params={"near": "abc,1", "radius_km": 5})
     assert r.status_code == 422
+
+
+def test_detail_exposes_source_status_and_jumuah_missing(seeded):
+    from directory.db import session_scope
+    from directory.models import Source
+
+    with session_scope(seeded) as s:
+        s.add(Source(id="leic", mosque_id="leic", url="https://a.example", config="{}",
+                     triage_status="authored", flags='["jumuah_missing"]'))
+    app = create_app()
+    app.dependency_overrides[get_engine] = lambda: seeded
+    client = TestClient(app)
+    body = client.get("/v1/mosques/leic").json()
+    assert body["source_status"] == "authored"
+    assert body["jumuah_missing"] is True
+    # the mosque with no source reports nulls/false
+    other = client.get("/v1/mosques/lon").json()
+    assert other["source_status"] is None
+    assert other["jumuah_missing"] is False

@@ -43,6 +43,7 @@ class Source(Base):
     triage_status: Mapped[str] = mapped_column(String, nullable=False, default="candidate")
     confidence: Mapped[float | None] = mapped_column(Float)
     review_reason: Mapped[str | None] = mapped_column(String)
+    flags: Mapped[str | None] = mapped_column(String)  # JSON array of strings
     authored_by: Mapped[str | None] = mapped_column(String)
     authored_at: Mapped[str | None] = mapped_column(String)
     source_html_hash: Mapped[str | None] = mapped_column(String)

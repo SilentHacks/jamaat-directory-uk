@@ -84,6 +84,122 @@ def test_dead_site_nulls_website(engine, tmp_path):
         assert repo.get_mosque(s, "dead").website_url is None
 
 
+HOME_WITH_LINKS = (
+    '<html><body><a href="/prayer-times">Prayer Times</a>'
+    '<a href="/timetable">Timetable</a></body></html>'
+)
+
+GENERIC_TABLE = """
+<html><body><table>
+  <tr><th>Date</th><th>Fajr</th><th>Dhuhr</th><th>Asr</th><th>Maghrib</th><th>Isha</th></tr>
+  <tr><td>1 June</td><td>05:00</td><td>13:15</td><td>18:30</td><td>21:10</td><td>22:30</td></tr>
+  <tr><td>2 June</td><td>05:02</td><td>13:16</td><td>18:31</td><td>21:11</td><td>22:31</td></tr>
+  <tr><td>3 June</td><td>05:03</td><td>13:17</td><td>18:32</td><td>21:12</td><td>22:32</td></tr>
+</table></body></html>
+"""
+
+PARTIAL_TABLE = """
+<html><body><table>
+  <tr><th>Date</th><th>Fajr</th><th>Dhuhr</th><th>Asr</th></tr>
+  <tr><td>1 June</td><td>05:00</td><td>13:15</td><td>18:30</td></tr>
+  <tr><td>2 June</td><td>05:02</td><td>13:16</td><td>18:31</td></tr>
+</table></body></html>
+"""
+
+
+def _mosque(engine, mid, url):
+    with session_scope(engine) as s:
+        s.add(Mosque(id=mid, name=mid, lat=51.0, lng=-1.0, website_url=url))
+
+
+def _live_client():
+    return httpx.Client(
+        transport=httpx.MockTransport(lambda r: httpx.Response(200, text="ok")),
+        follow_redirects=True,
+    )
+
+
+def test_platform_on_subpage_authors(engine, tmp_path):
+    from datetime import date
+
+    _mosque(engine, "wpsub", "https://wpsub.example/")
+    fetcher = _fetcher_for({
+        "https://wpsub.example/": HOME_WITH_LINKS,
+        "https://wpsub.example/prayer-times": WP_HTML,
+    })
+    out = discover_mosque(engine, "wpsub", fetcher=fetcher, client=_live_client(),
+                          candidate_root=tmp_path, today=date(2026, 6, 1), horizon_days=20)
+    assert out.outcome in {"authored", "review"}
+    assert out.platform == "wp_prayer"
+
+
+def test_generic_table_on_subpage_authors(engine, tmp_path):
+    from datetime import date
+
+    _mosque(engine, "gen", "https://gen.example/")
+    fetcher = _fetcher_for({
+        "https://gen.example/": HOME_WITH_LINKS,
+        "https://gen.example/timetable": GENERIC_TABLE,
+    })
+    out = discover_mosque(engine, "gen", fetcher=fetcher, client=_live_client(),
+                          candidate_root=tmp_path, today=date(2026, 6, 1), horizon_days=20)
+    assert out.outcome == "authored"
+    assert out.platform == "generic_table"
+
+
+def test_partial_table_routes_to_review(engine, tmp_path):
+    from datetime import date
+
+    _mosque(engine, "part", "https://part.example/")
+    fetcher = _fetcher_for({
+        "https://part.example/": HOME_WITH_LINKS,
+        "https://part.example/timetable": PARTIAL_TABLE,
+    })
+    out = discover_mosque(engine, "part", fetcher=fetcher, client=_live_client(),
+                          candidate_root=tmp_path, today=date(2026, 6, 1), horizon_days=20)
+    assert out.outcome == "review"
+    assert out.platform == "generic_table"
+    with session_scope(engine) as s:
+        assert repo.get_source(s, "part").triage_status == "review"
+
+
+def test_nothing_found_falls_through_to_candidate(engine, tmp_path):
+    _mosque(engine, "none", "https://none.example/")
+    fetcher = _fetcher_for({"https://none.example/": HOME_WITH_LINKS})
+    out = discover_mosque(engine, "none", fetcher=fetcher, client=_live_client(),
+                          candidate_root=tmp_path)
+    assert out.outcome == "candidate"
+    assert (tmp_path / "none.json").exists()
+
+
+def test_blocklisted_after_redirect_short_circuits(engine, tmp_path):
+    fetch_calls = []
+
+    def _spy_fetcher(url, **kwargs):
+        from directory.ingest.fetch import FetchResult
+        fetch_calls.append(url)
+        return FetchResult(url, 200, "<html></html>", "hash")
+
+    with session_scope(engine) as s:
+        s.add(Mosque(id="fb", name="fb", lat=51.0, lng=-1.0,
+                     website_url="https://masjid.example/"))
+    # liveness resolves the seed to a facebook page (redirect target is blocklisted)
+    def _handler(r):
+        if "masjid.example" in str(r.url):
+            return httpx.Response(302, headers={"Location": "https://www.facebook.com/x"})
+        return httpx.Response(200, text="ok")
+
+    client = httpx.Client(
+        transport=httpx.MockTransport(_handler), follow_redirects=True
+    )
+    out = discover_mosque(engine, "fb", fetcher=_spy_fetcher, client=client,
+                          candidate_root=tmp_path)
+    assert out.outcome == "blocklisted"
+    assert fetch_calls == []  # no fetch, no AI
+    with session_scope(engine) as s:
+        assert repo.get_source(s, "fb").triage_status == "blocklisted"
+
+
 def test_run_discovery_covers_all(engine, tmp_path):
     with session_scope(engine) as s:
         s.add_all([

@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS source (
     triage_status    TEXT NOT NULL DEFAULT 'candidate',
     confidence       REAL,
     review_reason    TEXT,
+    flags            TEXT,                      -- JSON array of strings
     authored_by      TEXT,
     authored_at      TEXT,
     source_html_hash TEXT,

@@ -221,12 +221,15 @@ def set_source_state(
     source_html_hash: str | None = None,
     authored_by: str | None = None,
     authored_at: str | None = None,
+    flags: list[str] | None = None,
 ) -> None:
     src = session.get(Source, source_id)
     if src is None:
         return
     if triage_status is not None:
         src.triage_status = triage_status
+    if flags is not None:
+        src.flags = json.dumps(flags)
     if confidence is not None:
         src.confidence = confidence
     if review_reason is not None:
@@ -300,6 +303,19 @@ def sources_in_review(session: Session) -> list[Source]:
             select(Source).where(Source.triage_status == "review").order_by(Source.id)
         )
     )
+
+
+def source_for_mosque(session: Session, mosque_id: str) -> Source | None:
+    return session.scalars(
+        select(Source).where(Source.mosque_id == mosque_id).order_by(Source.id)
+    ).first()
+
+
+def sources_with_flag(session: Session, flag: str) -> list[Source]:
+    rows = session.scalars(
+        select(Source).where(Source.flags.is_not(None)).order_by(Source.id)
+    )
+    return [src for src in rows if flag in json.loads(src.flags or "[]")]
 
 
 def mosques_for_discovery(session: Session) -> list[Mosque]:

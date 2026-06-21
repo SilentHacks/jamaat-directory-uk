@@ -1,7 +1,9 @@
+import json
+
 from pydantic import BaseModel
 
 from directory.domain import DAILY_PRAYERS, Prayer
-from directory.models import Mosque, Occurrence
+from directory.models import Mosque, Occurrence, Source
 
 
 class JumuahSession(BaseModel):
@@ -22,9 +24,14 @@ class MosqueOut(BaseModel):
     website_url: str | None
     status: str
     has_times: bool
+    source_status: str | None = None
+    jumuah_missing: bool = False
 
     @classmethod
-    def from_model(cls, m: Mosque, has_times: bool) -> "MosqueOut":
+    def from_model(
+        cls, m: Mosque, has_times: bool, source: Source | None = None
+    ) -> "MosqueOut":
+        flags = json.loads(source.flags) if source and source.flags else []
         return cls(
             id=m.id,
             name=m.name,
@@ -38,6 +45,8 @@ class MosqueOut(BaseModel):
             website_url=m.website_url,
             status=m.status,
             has_times=has_times,
+            source_status=source.triage_status if source else None,
+            jumuah_missing="jumuah_missing" in flags,
         )
 
 

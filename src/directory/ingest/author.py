@@ -1,7 +1,9 @@
 # src/directory/ingest/author.py
 import json
+import threading
 from collections import Counter
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -105,7 +107,7 @@ def _attempt(
         load_bespoke(ctx.bespoke_root)
 
     now = datetime.now(tz=UTC).isoformat(timespec="seconds")
-    with session_scope(ctx.engine) as s:
+    with session_scope(ctx.engine, write=True) as s:
         repo.create_or_update_source(
             s, source_id=mosque_id, mosque_id=mosque_id, url=chosen_url,
             platform=None, shape=config.shape, config=config.to_json(),
@@ -147,7 +149,7 @@ def author_mosque(
 
     bundle = CandidateBundle.load(mosque_id, candidate_root)
     if bundle is None or not bundle.candidates:
-        with session_scope(engine) as s:
+        with session_scope(engine, write=True) as s:
             repo.set_source_state(
                 s, mosque_id, triage_status="no_timetable", last_status="no_candidate"
             )
@@ -174,7 +176,7 @@ def author_mosque(
             if outcome is not None:
                 return outcome
 
-    with session_scope(engine) as s:
+    with session_scope(engine, write=True) as s:
         repo.set_source_state(
             s, mosque_id, triage_status="needs_reauthor", last_status="error", last_error=detail
         )
@@ -184,6 +186,37 @@ def author_mosque(
 def order_by_city_size(mosques: list[Mosque]) -> list[Mosque]:
     counts = Counter(m.city for m in mosques)
     return sorted(mosques, key=lambda m: (-counts[m.city], m.id))
+
+
+class Budget:
+    """Thread-safe spend cap. Workers reserve a slot before a chargeable harness
+    call and refund it when the attempt turns out free (skipped/no_candidate),
+    so the ``max_calls`` cap holds under concurrency."""
+
+    def __init__(self, max_calls: int) -> None:
+        self._max = max_calls
+        self._spent = 0
+        self._lock = threading.Lock()
+
+    def try_reserve(self) -> bool:
+        with self._lock:
+            if self._spent >= self._max:
+                return False
+            self._spent += 1
+            return True
+
+    def refund(self) -> None:
+        with self._lock:
+            if self._spent > 0:
+                self._spent -= 1
+
+    @property
+    def spent(self) -> int:
+        with self._lock:
+            return self._spent
+
+
+_FREE_OUTCOMES = {"no_candidate", "skipped"}
 
 
 def run_authoring(
@@ -196,6 +229,7 @@ def run_authoring(
     fallback_model: str = "agentic",
     bespoke_root: Path | None = None,
     max_calls: int = 50,
+    concurrency: int = 4,
     priority=order_by_city_size,
     today: date | None = None,
     horizon_days: int = 60,
@@ -208,17 +242,21 @@ def run_authoring(
         mosques = [m for m in mosques if m is not None]
         ordered_ids = [m.id for m in priority(mosques)]
 
-    outcomes: list[AuthorOutcome] = []
-    spent = 0
-    for mid in ordered_ids:
-        if spent >= max_calls:
-            break
+    budget = Budget(max_calls)
+
+    def _worker(mid: str) -> AuthorOutcome | None:
+        # Reserve before the (paid) harness call; budget-exhausted → don't dispatch.
+        if not budget.try_reserve():
+            return None
         out = author_mosque(
             engine, mid, harness=harness, candidate_root=candidate_root, models=models,
             fallback=fallback, fallback_model=fallback_model, bespoke_root=bespoke_root,
             today=today, horizon_days=horizon_days, fetcher=fetcher, renderer=renderer,
         )
-        outcomes.append(out)
-        if out.outcome not in {"no_candidate", "skipped"}:
-            spent += 1
-    return outcomes
+        if out.outcome in _FREE_OUTCOMES:
+            budget.refund()
+        return out
+
+    with ThreadPoolExecutor(max_workers=max(1, concurrency)) as pool:
+        results = list(pool.map(_worker, ordered_ids))
+    return [o for o in results if o is not None]

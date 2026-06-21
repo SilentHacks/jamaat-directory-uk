@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     author_page_budget: int = 8
     author_token_budget: int = 200_000
     bespoke_dir: Path = Path("data/bespoke")
+    blocklist_path: Path | None = None
+    discover_concurrency: int = 16
+    author_concurrency: int = 4
 
     @property
     def database_url(self) -> str:

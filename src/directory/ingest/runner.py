@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 
@@ -21,7 +22,7 @@ class ExtractOutcome:
 
 
 def _reauthor(engine, source_id, error) -> ExtractOutcome:
-    with session_scope(engine) as s:
+    with session_scope(engine, write=True) as s:
         repo.set_source_state(
             s, source_id, triage_status="needs_reauthor", last_status="error", last_error=error
         )
@@ -65,18 +66,19 @@ def extract_source(
 
     activate = gate.lane == "auto_accept" or (gate.lane == "review" and accept_review)
     if activate:
-        with session_scope(engine) as s:
+        with session_scope(engine, write=True) as s:
             n = repo.replace_source_occurrences(s, source_id, mosque_id, rows)
             repo.set_source_state(
                 s, source_id, triage_status="authored", confidence=gate.confidence,
                 last_status="ok", last_fetched_at=now, source_html_hash=fetched.html_hash,
+                flags=gate.flags,
             )
             repo.record_extractor_run(s, source_id, ok=True, rows_written=n)
         return ExtractOutcome(source_id, True, n, gate.lane, "authored")
 
     if gate.lane == "review":
         reason = "; ".join(gate.reasons)
-        with session_scope(engine) as s:
+        with session_scope(engine, write=True) as s:
             repo.set_source_state(
                 s, source_id, triage_status="review", confidence=gate.confidence,
                 review_reason=reason, last_status="review", last_fetched_at=now,
@@ -95,12 +97,17 @@ def run_extract(
     horizon_days: int = 60,
     fetcher=fetch,
     renderer=None,
+    concurrency: int = 16,
 ) -> list[ExtractOutcome]:
     with session_scope(engine) as s:
         source_ids = [src.id for src in repo.authored_sources(s)]
-    return [
-        extract_source(
-            engine, sid, today=today, horizon_days=horizon_days, fetcher=fetcher, renderer=renderer
+
+    def _one(sid: str) -> ExtractOutcome:
+        return extract_source(
+            engine, sid, today=today, horizon_days=horizon_days,
+            fetcher=fetcher, renderer=renderer,
         )
-        for sid in source_ids
-    ]
+
+    # source_ids are id-ordered; pool.map preserves order → deterministic results.
+    with ThreadPoolExecutor(max_workers=max(1, concurrency)) as pool:
+        return list(pool.map(_one, source_ids))

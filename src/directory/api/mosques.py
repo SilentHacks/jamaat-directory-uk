@@ -53,7 +53,12 @@ def list_mosques(
             s, city=city, bbox=bbox_t, near=near_t, radius_km=radius_km,
             has_times=has_times, limit=limit, offset=offset,
         )
-        return [MosqueOut.from_model(m, repo.mosque_has_times(s, m.id)) for m in rows]
+        return [
+            MosqueOut.from_model(
+                m, repo.mosque_has_times(s, m.id), repo.source_for_mosque(s, m.id)
+            )
+            for m in rows
+        ]
 
 
 @router.get("/{mosque_id}", response_model=MosqueOut)
@@ -62,4 +67,6 @@ def get_mosque(mosque_id: str, engine: Engine = Depends(get_engine)) -> MosqueOu
         m = repo.get_mosque(s, mosque_id)
         if m is None:
             raise HTTPException(404, "mosque not found")
-        return MosqueOut.from_model(m, repo.mosque_has_times(s, m.id))
+        return MosqueOut.from_model(
+            m, repo.mosque_has_times(s, m.id), repo.source_for_mosque(s, m.id)
+        )
