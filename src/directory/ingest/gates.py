@@ -1,5 +1,5 @@
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from directory.domain import DAILY_PRAYERS
 from directory.ingest.extractors.config_schema import SourceConfig
@@ -17,12 +17,15 @@ _WINDOWS: dict[str, tuple[int, int]] = {
 }
 _DAILY = [p.value for p in DAILY_PRAYERS]
 
+JUMUAH_MISSING = "jumuah_missing"
+
 
 @dataclass
 class GateResult:
     lane: str  # "auto_accept" | "review" | "auto_reject"
     confidence: float
     reasons: list[str]
+    flags: list[str] = field(default_factory=list)
 
 
 def _minutes(hhmm: str) -> int:
@@ -47,6 +50,40 @@ def _has_jumuah(occ: list[OccurrenceRow]) -> bool:
     return any(o.prayer == "jumuah" for o in occ)
 
 
+def _plausibility_failure(
+    by_date: dict[str, dict[str, OccurrenceRow]],
+) -> str | None:
+    """Apply window + monotonic checks to *whatever* daily prayers are present on
+    each date, in canonical order. Returns a reason string on the first failure."""
+    for d, prayers in by_date.items():
+        present = [p for p in _DAILY if p in prayers]
+        mins = [_minutes(prayers[p].jamaah_time) for p in present]
+        if mins != sorted(mins):
+            return f"{d}: non-monotonic day"
+        for p in present:
+            lo, hi = _WINDOWS[p]
+            if not (lo <= _minutes(prayers[p].jamaah_time) <= hi):
+                return f"{d}: {p} out of window"
+    return None
+
+
+def _jumuah_failure(occurrences: list[OccurrenceRow]) -> str | None:
+    jum_by_date: dict[str, list[OccurrenceRow]] = defaultdict(list)
+    for o in occurrences:
+        if o.prayer == "jumuah":
+            jum_by_date[o.date].append(o)
+    for d, sessions in jum_by_date.items():
+        if not (1 <= len(sessions) <= 4):
+            return f"{d}: bad jumuah session count"
+        times = [_minutes(s.jamaah_time) for s in sorted(sessions, key=lambda s: s.session_idx)]
+        if times != sorted(times) or len(set(times)) != len(times):
+            return f"{d}: jumuah sessions not ordered/distinct"
+        lo, hi = _WINDOWS["jumuah"]
+        if any(not (lo <= t <= hi) for t in times):
+            return f"{d}: jumuah out of window"
+    return None
+
+
 def run_gates(
     config: SourceConfig,
     result: ExtractionResult,
@@ -67,20 +104,12 @@ def run_gates(
     by_date: dict[str, dict[str, OccurrenceRow]] = defaultdict(dict)
     for o in daily:
         by_date[o.date][o.prayer] = o
-
     has_begin = any(o.begin_time for o in daily)
 
-    for d, prayers in by_date.items():
-        missing = [p for p in _DAILY if p not in prayers]
-        if missing:
-            return GateResult("auto_reject", 0.0, [f"{d}: missing {missing}"])
-        mins = [_minutes(prayers[p].jamaah_time) for p in _DAILY]
-        if mins != sorted(mins):
-            return GateResult("auto_reject", 0.0, [f"{d}: non-monotonic day"])
-        for p in _DAILY:
-            lo, hi = _WINDOWS[p]
-            if not (lo <= _minutes(prayers[p].jamaah_time) <= hi):
-                return GateResult("auto_reject", 0.0, [f"{d}: {p} out of window"])
+    # Plausibility on whatever is present → implausible data is rejected.
+    plaus = _plausibility_failure(by_date)
+    if plaus is not None:
+        return GateResult("auto_reject", 0.0, [plaus])
 
     # Self-extraction match: every distinct jamaah time must appear in the source.
     if html_text:
@@ -88,21 +117,25 @@ def run_gates(
             if o.jamaah_time not in html_text:
                 return GateResult("auto_reject", 0.0, [f"self-match failed for {o.jamaah_time}"])
 
-    # Jumu'ah gates.
-    jum_by_date: dict[str, list[OccurrenceRow]] = defaultdict(list)
-    for o in occurrences:
-        if o.prayer == "jumuah":
-            jum_by_date[o.date].append(o)
-    for d, sessions in jum_by_date.items():
-        if not (1 <= len(sessions) <= 4):
-            return GateResult("auto_reject", 0.0, [f"{d}: bad jumuah session count"])
-        times = [_minutes(s.jamaah_time) for s in sorted(sessions, key=lambda s: s.session_idx)]
-        if times != sorted(times) or len(set(times)) != len(times):
-            return GateResult("auto_reject", 0.0, [f"{d}: jumuah sessions not ordered/distinct"])
-        lo, hi = _WINDOWS["jumuah"]
-        if any(not (lo <= t <= hi) for t in times):
-            return GateResult("auto_reject", 0.0, [f"{d}: jumuah out of window"])
+    # Jumu'ah plausibility (malformed sessions are always rejected).
+    jum = _jumuah_failure(occurrences)
+    if jum is not None:
+        return GateResult("auto_reject", 0.0, [jum])
 
+    # Only jumuah, no daily at all → withhold for review (not served).
+    if not daily:
+        return GateResult("review", 0.5, [*reasons, "only jumuah, no daily"])
+
+    # Completeness: which prayers are missing across the horizon?
+    missing_by_date = {
+        d: [p for p in _DAILY if p not in prayers] for d, prayers in by_date.items()
+    }
+    missing_prayers = sorted({p for miss in missing_by_date.values() for p in miss})
+    if missing_prayers:
+        reasons.append(f"incomplete: missing {missing_prayers}")
+        return GateResult("review", 0.7, reasons)
+
+    # Every date has all five daily prayers from here on.
     # Constant-column red flag → review (fixed iqamah is common, so soften to review).
     distinct_dates = len(by_date)
     if distinct_dates >= 7 and not has_begin:
@@ -113,4 +146,7 @@ def run_gates(
             reasons.append("all daily prayers constant across horizon, no begin column")
             return GateResult("review", 0.7, reasons)
 
-    return GateResult("auto_accept", 1.0, reasons or ["clean"])
+    flags: list[str] = []
+    if not _has_jumuah(occurrences):
+        flags.append(JUMUAH_MISSING)
+    return GateResult("auto_accept", 1.0, reasons or ["clean"], flags)
