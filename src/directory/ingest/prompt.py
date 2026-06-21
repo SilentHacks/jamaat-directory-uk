@@ -17,7 +17,9 @@ Return ONE JSON object and nothing else (no prose, no code fences):
       "date": {{"index": 0, "selector": "<css>", "format": null}},
       "columns": [
         {{"kind": "jamaah", "prayer": "fajr", "index": 1,
-          "selector": "<css>", "header_seen": "<raw header text>"}}
+          "selector": "<css>", "header_seen": "<raw header text>"}},
+        {{"kind": "jamaah", "prayer": "isha", "index": 9,
+          "value_kind": "offset", "base_prayer": "isha", "header_seen": "Jamā‘ah"}}
       ]
     }},
     "jumuah": {{                      // optional weekly Friday block
@@ -33,6 +35,10 @@ Rules:
 - html_table columns use a 0-based "index"; html_repeated columns use a CSS "selector".
 - "kind" is "jamaah" (congregation / iqamah) or "begin" (adhan / start time).
 - Copy the raw column header text into "header_seen" for every column.
+- If a jamaah cell is a relative offset like "+5" / "+10 min" (minutes after a
+  begin time), set "value_kind": "offset" on that column. The offset resolves
+  against "base_prayer"'s begin time on the same day (default: the column's own
+  prayer) — so the table MUST also have a "begin" column for that base prayer.
 - Use "rules" only for fixed times; "widget" only for embedded prayer-time widgets.
 - Times are 24-hour "HH:MM".
 """
@@ -85,6 +91,8 @@ time) rows. Import what you need from:
 Rules:
 - "prayer" is exactly one of: {_PRAYERS}.
 - "kind" is "jamaah" (congregation / iqamah) or "begin" (adhan / start time).
+- A jamaah column of relative offsets ("+5") uses "value_kind": "offset" and
+  resolves against "base_prayer"'s begin time (default: its own prayer).
 - Times are 24-hour "HH:MM".
 - If you cannot find a timetable within your budget, output exactly {{}}.
 """
