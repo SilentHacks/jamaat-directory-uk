@@ -30,3 +30,44 @@ def test_author_one_invokes_author_mosque(monkeypatch):
     result = runner.invoke(cli.app, ["author", "--mosque-id", "m1"])
     assert result.exit_code == 0
     assert "m1: outcome=authored" in result.stdout
+
+
+def test_author_agentic_flag_passes_fallback(monkeypatch, tmp_path):
+    import directory.cli as cli
+
+    captured = {}
+
+    def fake_run_authoring(engine, **kwargs):
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setenv("DIRECTORY_DB_PATH", str(tmp_path / "t.db"))
+    monkeypatch.setattr(cli, "run_authoring", fake_run_authoring)
+
+    result = runner.invoke(cli.app, ["init-db"])
+    assert result.exit_code == 0
+    result = runner.invoke(cli.app, ["author", "--agentic"])
+    assert result.exit_code == 0
+
+    assert captured["fallback_name"] == "agentic"
+    assert captured["bespoke_root"] is not None
+
+
+def test_extract_loads_bespoke_modules(monkeypatch, tmp_path):
+    import directory.cli as cli
+
+    seen = {}
+
+    def fake_load_bespoke(root):
+        seen["root"] = root
+        return []
+
+    monkeypatch.setenv("DIRECTORY_DB_PATH", str(tmp_path / "t.db"))
+    monkeypatch.setattr(cli, "load_bespoke", fake_load_bespoke)
+    monkeypatch.setattr(cli, "run_extract", lambda engine, **kwargs: [])
+
+    runner.invoke(cli.app, ["init-db"])
+    result = runner.invoke(cli.app, ["extract"])
+
+    assert result.exit_code == 0
+    assert str(seen["root"]).endswith("bespoke")
