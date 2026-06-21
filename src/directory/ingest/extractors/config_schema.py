@@ -15,6 +15,8 @@ class ColumnSpec(BaseModel):
     index: int | None = None  # html_table: 0-based column index (post-transpose)
     selector: str | None = None  # html_repeated: CSS selector within a row item
     header_seen: str | None = None  # raw header text captured at authoring
+    value_kind: Literal["time", "offset"] | None = None  # None == "time"
+    base_prayer: Prayer | None = None  # offset base; None → this column's own prayer
 
 
 class DateSpec(BaseModel):
