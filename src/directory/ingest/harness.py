@@ -97,6 +97,8 @@ class OpenCodeAgenticHarness:
         self._runner = runner
 
     def _with_budget(self, prompt: str) -> str:
+        # Page/token budget is a best-effort directive to the agent; the subprocess
+        # timeout is the only hard ceiling for cost enforcement.
         return (
             f"{prompt}\n\nBudget: visit at most {self._page_budget} pages and "
             f"{self._token_budget} tokens. If you exceed either, stop and output "

@@ -86,7 +86,8 @@ query param; run it behind Caddy/Cloudflare in production.
 When single-shot authoring (cheap→strong) cannot map a `candidate`, enable the
 stage-4 agentic browsing fallback — a browsing `AuthorHarness` (default: the
 OpenCode `browse` agent) that navigates the live site under a per-site
-page/token budget and emits the **same** `SourceConfig`, or, for a genuinely
+page/token budget (a best-effort directive to the agent; only the subprocess
+timeout is a hard ceiling) and emits the **same** `SourceConfig`, or, for a genuinely
 unique layout, a `bespoke` Python extractor module.
 
 ```bash
