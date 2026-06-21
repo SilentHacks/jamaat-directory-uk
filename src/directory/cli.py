@@ -70,24 +70,38 @@ def serve(host: str = "127.0.0.1", port: int = 8000) -> None:
 def extract(
     source_id: str | None = typer.Option(None, "--source-id", help="Extract one source"),  # noqa: B008
     horizon_days: int = typer.Option(60, "--horizon-days", help="Days of occurrences"),  # noqa: B008
+    concurrency: int | None = typer.Option(  # noqa: B008
+        None, "--concurrency", help="Parallel source extracts (default from settings)"
+    ),
 ) -> None:
     """Run the deterministic daily extract over authored sources."""
-    engine = _engine_from_env()
-    load_bespoke(Settings().bespoke_dir)
+    settings = Settings()
+    engine = make_engine(settings.database_url)
+    load_bespoke(settings.bespoke_dir)
     if source_id is not None:
         outcomes = [extract_source(engine, source_id, horizon_days=horizon_days)]
     else:
-        outcomes = run_extract(engine, horizon_days=horizon_days)
+        outcomes = run_extract(
+            engine, horizon_days=horizon_days,
+            concurrency=concurrency or settings.discover_concurrency,
+        )
     for o in outcomes:
         typer.echo(f"{o.source_id}: lane={o.lane} status={o.triage_status} rows={o.rows_written}")
     typer.echo(f"Processed {len(outcomes)} source(s)")
 
 
 @app.command("validate-websites")
-def validate_websites_cmd() -> None:
+def validate_websites_cmd(
+    concurrency: int | None = typer.Option(  # noqa: B008
+        None, "--concurrency", help="Parallel liveness checks (default from settings)"
+    ),
+) -> None:
     """Verify-or-empty the known mosque websites (resolve redirects, drop dead)."""
-    engine = _engine_from_env()
-    summary = validate_websites(engine)
+    settings = Settings()
+    engine = make_engine(settings.database_url)
+    summary = validate_websites(
+        engine, concurrency=concurrency or settings.discover_concurrency
+    )
     typer.echo(
         f"checked={summary.checked} repaired={summary.repaired} "
         f"dropped={summary.dropped} unchanged={summary.unchanged}"
@@ -98,6 +112,9 @@ def validate_websites_cmd() -> None:
 def discover(
     mosque_id: str | None = typer.Option(None, "--mosque-id", help="Discover one mosque"),  # noqa: B008
     horizon_days: int = typer.Option(60, "--horizon-days", help="Verification horizon"),  # noqa: B008
+    concurrency: int | None = typer.Option(  # noqa: B008
+        None, "--concurrency", help="Parallel mosque discovery (default from settings)"
+    ),
 ) -> None:
     """Run the deterministic discovery funnel (liveness → platform → gather)."""
     settings = Settings()
@@ -110,8 +127,10 @@ def discover(
                             horizon_days=horizon_days, blocklist=blocklist)
         ]
     else:
-        outcomes = run_discovery(engine, candidate_root=root,
-                                 horizon_days=horizon_days, blocklist=blocklist)
+        outcomes = run_discovery(
+            engine, candidate_root=root, horizon_days=horizon_days, blocklist=blocklist,
+            concurrency=concurrency or settings.discover_concurrency,
+        )
     for o in outcomes:
         typer.echo(f"{o.mosque_id}: outcome={o.outcome} platform={o.platform}")
     typer.echo(f"Discovered {len(outcomes)} mosque(s)")
@@ -123,6 +142,9 @@ def author(
     max_calls: int | None = typer.Option(None, "--max-calls", help="Per-run harness call budget"),  # noqa: B008
     horizon_days: int = typer.Option(60, "--horizon-days", help="Verification horizon"),  # noqa: B008
     agentic: bool = typer.Option(False, "--agentic", help="Enable the stage-4 agentic fallback"),  # noqa: B008
+    concurrency: int | None = typer.Option(  # noqa: B008
+        None, "--concurrency", help="Parallel authoring workers (default from settings)"
+    ),
 ) -> None:
     """Single-shot authoring of candidate sources via the agent harness."""
     settings = Settings()
@@ -151,7 +173,9 @@ def author(
             engine, harness=harness, candidate_root=root, models=models,
             fallback=fallback, fallback_model=settings.author_model_strong,
             bespoke_root=settings.bespoke_dir,
-            max_calls=max_calls or settings.author_max_calls, horizon_days=horizon_days,
+            max_calls=max_calls or settings.author_max_calls,
+            concurrency=concurrency or settings.author_concurrency,
+            horizon_days=horizon_days,
         )
     for o in outcomes:
         typer.echo(f"{o.mosque_id}: outcome={o.outcome} model={o.model}")

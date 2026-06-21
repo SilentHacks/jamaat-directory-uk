@@ -50,3 +50,20 @@ def test_author_budget_settings_defaults():
     assert s.author_page_budget == 8
     assert s.author_token_budget == 200_000
     assert str(s.bespoke_dir) == "data/bespoke"
+
+
+def test_concurrency_settings_defaults_and_overrides(monkeypatch):
+    from directory.config import Settings, get_settings
+
+    s = Settings()
+    assert s.discover_concurrency == 16
+    assert s.author_concurrency == 4
+    assert s.blocklist_path is None
+
+    monkeypatch.setenv("DIRECTORY_DISCOVER_CONCURRENCY", "8")
+    monkeypatch.setenv("DIRECTORY_AUTHOR_CONCURRENCY", "2")
+    get_settings.cache_clear()
+    s2 = Settings()
+    assert s2.discover_concurrency == 8
+    assert s2.author_concurrency == 2
+    get_settings.cache_clear()
