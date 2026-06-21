@@ -111,9 +111,14 @@ def run_gates(
     if plaus is not None:
         return GateResult("auto_reject", 0.0, [plaus])
 
-    # Self-extraction match: every distinct jamaah time must appear in the source.
+    # Self-extraction match: every scraped jamaah time must appear in the source.
+    # Derived times (begin + offset) are computed, not present verbatim, so they
+    # are exempt; their plausibility is still enforced by the window/monotonic
+    # checks above and the begin time they derive from is itself in the source.
     if html_text:
         for o in occurrences:
+            if o.derived:
+                continue
             if o.jamaah_time not in html_text:
                 return GateResult("auto_reject", 0.0, [f"self-match failed for {o.jamaah_time}"])
 

@@ -105,6 +105,33 @@ def test_self_match_failure_auto_rejects():
     assert any("self-match" in r for r in res.reasons)
 
 
+def _mark_derived(occ, prayer):
+    return [
+        OccurrenceRow(o.date, o.prayer, o.session_idx, o.jamaah_time, o.begin_time, o.label,
+                      derived=(o.prayer == prayer))
+        for o in occ
+    ]
+
+
+def test_derived_jamaah_time_is_exempt_from_self_match():
+    # Isha jamaah is computed from begin + offset, so 23:00 is absent from the
+    # source. Derived occurrences skip the verbatim self-match check.
+    occ = _day("2026-06-21", ["05:00", "13:30", "18:30", "21:30", "23:00"])
+    occ += _day("2026-06-22", ["05:01", "13:30", "18:31", "21:31", "23:00"])
+    occ = _mark_derived(occ, "isha")
+    html = "05:00 05:01 13:30 18:30 18:31 21:30 21:31"  # every non-isha time, no 23:00
+    res = run_gates(GRID_CFG, ExtractionResult(), occ, html_text=html)
+    assert res.lane == "auto_accept"
+
+
+def test_derived_time_out_of_window_still_auto_rejects():
+    # The exemption is only for self-match; plausibility still guards a bad offset.
+    occ = _day("2026-06-21", ["05:00", "13:30", "18:30", "21:30", "09:00"])  # isha 09:00
+    occ = _mark_derived(occ, "isha")
+    res = run_gates(GRID_CFG, ExtractionResult(), occ, html_text="")
+    assert res.lane == "auto_reject"
+
+
 def test_empty_occurrences_auto_rejects():
     assert run_gates(GRID_CFG, ExtractionResult(), []).lane == "auto_reject"
 
