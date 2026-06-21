@@ -70,6 +70,7 @@ def extract_source(
             repo.set_source_state(
                 s, source_id, triage_status="authored", confidence=gate.confidence,
                 last_status="ok", last_fetched_at=now, source_html_hash=fetched.html_hash,
+                flags=gate.flags,
             )
             repo.record_extractor_run(s, source_id, ok=True, rows_written=n)
         return ExtractOutcome(source_id, True, n, gate.lane, "authored")
