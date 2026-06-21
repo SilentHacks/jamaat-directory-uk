@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Review — {{ name or source.id }}{% endblock %}
+{% block content %}
+<p><a href="/admin/review?key={{ key }}">&larr; Review queue</a></p>
+<h2>{{ name or source.id }}</h2>
+<p class="muted">Reason: {{ source.review_reason or "—" }}</p>
+<p>Source:
+  {% if source.url %}<a href="{{ source.url }}" rel="nofollow noopener">{{ source.url }}</a>
+  {% else %}<span class="muted">none</span>{% endif %}
+</p>
+
+<h3>Extracted preview</h3>
+<div id="preview">
+  <button hx-get="/admin/review/{{ source.id }}/preview?key={{ key }}"
+          hx-target="#preview" hx-swap="innerHTML">Load preview</button>
+</div>
+
+<h3>Config mapping</h3>
+<form hx-post="/admin/review/{{ source.id }}/fix?key={{ key }}" hx-target="#outcome">
+  <textarea name="config_json" rows="16" style="width:100%;font-family:monospace">{{ config_pretty }}</textarea>
+  <p><button type="submit">Save mapping &amp; re-check</button></p>
+</form>
+
+<div id="outcome" class="muted"></div>
+
+<form hx-post="/admin/review/{{ source.id }}/approve?key={{ key }}" hx-target="#outcome"
+      style="display:inline">
+  <button type="submit">Approve</button>
+</form>
+<form hx-post="/admin/review/{{ source.id }}/reject?key={{ key }}" hx-target="#outcome"
+      style="display:inline">
+  <button type="submit">Reject</button>
+</form>
+{% endblock %}
