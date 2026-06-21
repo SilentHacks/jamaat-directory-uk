@@ -51,3 +51,18 @@ def test_network_error_is_captured():
     res = fetch("https://down.example", client=_client(handler))
     assert res.error is not None
     assert res.html is None
+
+
+def test_renderer_failure_is_captured_not_raised():
+    # A renderer (Playwright) that times out / raises must not crash discovery;
+    # it yields an error result so the page is skipped.
+    def handler(request):
+        return httpx.Response(200, text="<div>spinner</div>")
+
+    def boom(url):
+        raise RuntimeError("Page.goto: Timeout 30000ms exceeded")
+
+    res = fetch("https://m.example/spa", requires_js=True, client=_client(handler), renderer=boom)
+    assert res.error is not None
+    assert "render failed" in res.error
+    assert res.html is None
