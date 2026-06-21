@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Flagged ({{ flag }}){% endblock %}
+{% block content %}
+<h2>Flagged: {{ flag }} ({{ items|length }})</h2>
+<p class="muted">These sources stay live; the flag is informational, not blocking.</p>
+<table>
+  <thead><tr><th>Mosque</th><th>Status</th></tr></thead>
+  <tbody>
+  {% for it in items %}
+    <tr>
+      <td>{{ it.name or it.source_id }}</td>
+      <td class="muted">{{ it.status }}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="2" class="muted">Nothing flagged.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

@@ -305,6 +305,12 @@ def sources_in_review(session: Session) -> list[Source]:
     )
 
 
+def source_for_mosque(session: Session, mosque_id: str) -> Source | None:
+    return session.scalars(
+        select(Source).where(Source.mosque_id == mosque_id).order_by(Source.id)
+    ).first()
+
+
 def sources_with_flag(session: Session, flag: str) -> list[Source]:
     rows = session.scalars(
         select(Source).where(Source.flags.is_not(None)).order_by(Source.id)
