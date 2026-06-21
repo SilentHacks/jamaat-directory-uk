@@ -18,6 +18,7 @@ from directory.ingest.extractors.tablegrid import (
 from directory.ingest.normalize import (
     normalize_token,
     parse_date,
+    parse_offset,
     parse_time,
     resolve_kind,
     resolve_prayer,
@@ -53,24 +54,41 @@ def _parses_date(cell: str) -> bool:
 
 
 def _detect_columns(header: list[str], body: list[list[str]]) -> list[ColumnSpec]:
-    columns: list[ColumnSpec] = []
-    seen: set[tuple] = set()
+    # First pass: resolve each prayer column and whether its body is times or
+    # "+N" offsets. Second pass drops offset columns that have no begin column to
+    # resolve against, since they cannot be materialized.
+    raw: list[tuple[int, object, str, str, bool]] = []  # (idx, prayer, kind, text, is_offset)
     for idx, text in enumerate(header):
         match = resolve_prayer(text)
         prayer = match.prayer
         if prayer is None or prayer not in DAILY_PRAYERS:
             continue
-        # Fuzzy header matches are only trusted when the column body looks like times.
-        if match.fuzzy:
-            time_frac = _fraction(_column(body, idx), lambda c: parse_time(c) is not None)
-            if time_frac < _MIN_FRACTION:
-                continue
+        cells = _column(body, idx)
+        time_frac = _fraction(cells, lambda c: parse_time(c) is not None)
+        offset_frac = _fraction(cells, lambda c: parse_offset(c) is not None)
+        # Fuzzy header matches are only trusted when the body looks like times or offsets.
+        if match.fuzzy and max(time_frac, offset_frac) < _MIN_FRACTION:
+            continue
         kind = resolve_kind(text).kind or "jamaah"
+        is_offset = kind == "jamaah" and offset_frac >= _MIN_FRACTION and offset_frac >= time_frac
+        raw.append((idx, prayer, kind, text, is_offset))
+
+    begin_prayers = {p for (_, p, k, _, _) in raw if k == "begin"}
+    columns: list[ColumnSpec] = []
+    seen: set[tuple] = set()
+    for idx, prayer, kind, text, is_offset in raw:
+        if is_offset and prayer not in begin_prayers:
+            continue  # "+N" with no begin time → unmaterializable
         key = (prayer, kind)
         if key in seen:
             continue
         seen.add(key)
-        columns.append(ColumnSpec(kind=kind, prayer=prayer, index=idx, header_seen=text))
+        columns.append(
+            ColumnSpec(
+                kind=kind, prayer=prayer, index=idx, header_seen=text,
+                value_kind="offset" if is_offset else None,
+            )
+        )
     return columns
 
 
