@@ -81,6 +81,30 @@ extracted preview, config mapping, and flag reason, with approve / reject /
 fix-mapping actions. The key is accepted via the `X-API-Key` header or a `?key=`
 query param; run it behind Caddy/Cloudflare in production.
 
+### Agentic fallback (stage 4) + bespoke shape
+
+When single-shot authoring (cheap→strong) cannot map a `candidate`, enable the
+stage-4 agentic browsing fallback — a browsing `AuthorHarness` (default: the
+OpenCode `browse` agent) that navigates the live site under a per-site
+page/token budget and emits the **same** `SourceConfig`, or, for a genuinely
+unique layout, a `bespoke` Python extractor module.
+
+```bash
+directory author --agentic            # author the backlog with the stage-4 fallback
+directory author --mosque-id m1 --agentic
+```
+
+Bespoke modules the agent writes are persisted under `DIRECTORY_BESPOKE_DIR`
+(default `data/bespoke/`) and loaded by `directory extract` before the daily run,
+so the deterministic cron path can extract them with **zero** AI. A bespoke module
+that raises at runtime yields no rows (the gates then flag the source), never
+crashing the run. A fallback that exhausts its budget marks the source
+`needs_reauthor` — it never activates an unverified config.
+
+Configure via env: `DIRECTORY_AUTHOR_FALLBACK_HARNESS` (default `agentic`),
+`DIRECTORY_AUTHOR_PAGE_BUDGET`, `DIRECTORY_AUTHOR_TOKEN_BUDGET`,
+`DIRECTORY_BESPOKE_DIR`.
+
 Interactive API docs at `/docs`. Browse site at `/`.
 
 ## API
