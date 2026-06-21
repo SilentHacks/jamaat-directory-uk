@@ -146,3 +146,35 @@ def test_fallback_authors_via_bespoke_module(engine, tmp_path):
         assert src.shape == "bespoke"
         assert src.url == "https://m1.example/custom"
         assert s.query(Occurrence).filter_by(prayer="fajr").count() >= 2
+
+
+def test_fallback_budget_bail_marks_needs_reauthor(engine, tmp_path):
+    _candidate_mosque(engine)
+    save_bundle(_bundle(), root=tmp_path)
+    bail = FakeBrowsingHarness("", ok=False, error="budget exceeded: 8 pages")
+
+    out = author_mosque(
+        engine, "m1", harness=FakeHarness("nope"), candidate_root=tmp_path, models=("cheap",),
+        fallback=bail, bespoke_root=tmp_path / "bespoke",
+        today=date(2026, 6, 1), horizon_days=5, fetcher=_fetcher,
+    )
+
+    assert out.outcome == "needs_reauthor"
+    with session_scope(engine) as s:
+        src = repo.get_source(s, "m1")
+        assert src.triage_status == "needs_reauthor"
+        assert "budget exceeded" in src.last_error
+
+
+def test_fallback_empty_object_on_overrun_marks_needs_reauthor(engine, tmp_path):
+    _candidate_mosque(engine)
+    save_bundle(_bundle(), root=tmp_path)
+    overrun = FakeBrowsingHarness("{}")  # agent emitted {} after exhausting its budget
+
+    out = author_mosque(
+        engine, "m1", harness=FakeHarness("nope"), candidate_root=tmp_path, models=("cheap",),
+        fallback=overrun, bespoke_root=tmp_path / "bespoke",
+        today=date(2026, 6, 1), horizon_days=5, fetcher=_fetcher,
+    )
+
+    assert out.outcome == "needs_reauthor"  # {} fails SourceConfig validation
