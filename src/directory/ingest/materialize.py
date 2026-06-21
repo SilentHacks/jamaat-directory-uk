@@ -27,43 +27,44 @@ def materialize_grid(
 ) -> list[OccurrenceRow]:
     in_horizon = [c for c in cells if horizon_start <= c.date <= horizon_end]
 
-    # Begin times, indexed for offset resolution (an offset may target another prayer).
+    # Begin times, indexed so an offset (possibly cross-prayer) can resolve against
+    # them and so each row can carry its begin_time.
     begins: dict[tuple[date, Prayer], str] = {
         (c.date, c.prayer): c.time
         for c in in_horizon
         if c.kind == "begin" and c.time is not None
     }
 
-    merged: dict[tuple[date, Prayer], dict] = {}
+    # Per (date, prayer): the jamaah value as an absolute time or an offset.
+    jamaah: dict[tuple[date, Prayer], dict] = {}
     for c in in_horizon:
-        slot = merged.setdefault((c.date, c.prayer), {})
-        if c.kind == "begin" and c.time is not None:
-            slot["begin"] = c.time
-        elif c.kind == "jamaah":
-            if c.time is not None:
-                slot["jamaah"] = c.time
-            elif c.offset_min is not None:
-                slot["offset"] = (c.offset_min, c.base_prayer or c.prayer)
+        if c.kind != "jamaah":
+            continue
+        slot = jamaah.setdefault((c.date, c.prayer), {})
+        if c.time is not None:
+            slot["time"] = c.time
+        elif c.offset_min is not None:
+            slot["offset"] = (c.offset_min, c.base_prayer or c.prayer)
 
     rows: list[OccurrenceRow] = []
-    for (d, prayer), slot in merged.items():
+    for (d, prayer), slot in jamaah.items():
         derived = False
-        jamaah = slot.get("jamaah")
-        if jamaah is None and "offset" in slot:
+        time = slot.get("time")
+        if time is None and "offset" in slot:
             offset_min, base = slot["offset"]
             begin = begins.get((d, base))
             if begin is not None:
-                jamaah = _apply_offset(begin, offset_min)
+                time = _apply_offset(begin, offset_min)
                 derived = True
-        if jamaah is None:
+        if time is None:
             continue
         rows.append(
             OccurrenceRow(
                 date=d.isoformat(),
                 prayer=prayer.value,
                 session_idx=0,
-                jamaah_time=jamaah,
-                begin_time=slot.get("begin"),
+                jamaah_time=time,
+                begin_time=begins.get((d, prayer)),
                 label=None,
                 derived=derived,
             )

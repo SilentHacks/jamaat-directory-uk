@@ -2,7 +2,7 @@ from datetime import date
 
 from bs4 import BeautifulSoup
 
-from directory.domain import DAILY_PRAYERS
+from directory.domain import DAILY_PRAYERS, Prayer
 from directory.ingest.extractors.config_schema import (
     ColumnSpec,
     DateSpec,
@@ -57,7 +57,7 @@ def _detect_columns(header: list[str], body: list[list[str]]) -> list[ColumnSpec
     # First pass: resolve each prayer column and whether its body is times or
     # "+N" offsets. Second pass drops offset columns that have no begin column to
     # resolve against, since they cannot be materialized.
-    raw: list[tuple[int, object, str, str, bool]] = []  # (idx, prayer, kind, text, is_offset)
+    raw: list[tuple[int, Prayer, str, str, bool]] = []  # (idx, prayer, kind, text, is_offset)
     for idx, text in enumerate(header):
         match = resolve_prayer(text)
         prayer = match.prayer
