@@ -130,4 +130,15 @@ def extract(
         if fn is None:
             raise ValueError(f"no widget extractor for platform: {platform!r}")
         return fn(html, year=year, month=month)
+    if config.shape == "bespoke":
+        from directory.ingest.extractors.bespoke import get_bespoke
+
+        key = config.bespoke.module
+        fn = get_bespoke(key)
+        if fn is None:
+            raise ValueError(f"no bespoke extractor for module: {key!r}")
+        try:
+            return fn(html, year=year, month=month)
+        except Exception as exc:
+            return ExtractionResult(warnings=[f"bespoke extractor {key!r} raised: {exc}"])
     raise ValueError(f"unsupported shape: {config.shape!r}")
