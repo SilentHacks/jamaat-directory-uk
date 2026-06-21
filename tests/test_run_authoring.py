@@ -9,7 +9,7 @@ from directory.ingest.candidate_store import save_bundle
 from directory.ingest.discover import Candidate, CandidateBundle
 from directory.ingest.fetch import FetchResult
 from directory.models import Mosque, Source
-from tests.conftest import FakeHarness
+from tests.conftest import FakeBrowsingHarness, FakeHarness
 
 TABLE_HTML = (
     "<table class='t'><tr><th>Date</th><th>Fajr</th><th>Dhuhr</th><th>Asr</th>"
@@ -92,3 +92,17 @@ def test_budget_caps_spend_and_is_resumable(engine, tmp_path):
     assert len(second) == 1  # the previously-skipped one
     with session_scope(engine) as s:
         assert repo.candidate_sources(s) == []
+
+
+def test_run_authoring_escalates_to_fallback(engine, tmp_path):
+    _candidate(engine, "m1", "London", tmp_path)
+    fallback = FakeBrowsingHarness(_good_output("https://m1.example/prayer-times"))
+
+    outs = run_authoring(
+        engine, harness=FakeHarness("garbage"), fallback=fallback, candidate_root=tmp_path,
+        models=("cheap",), bespoke_root=tmp_path / "bespoke",
+        today=date(2026, 6, 1), horizon_days=5, fetcher=_fetcher,
+    )
+
+    assert [o.outcome for o in outs] == ["authored"]
+    assert fallback.calls == ["agentic"]

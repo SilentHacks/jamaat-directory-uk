@@ -60,12 +60,17 @@ class WidgetSpec(BaseModel):
     data_url: str | None = None
 
 
+class BespokeSpec(BaseModel):
+    module: str  # registry key for the agent-written extractor module
+
+
 class SourceConfig(BaseModel):
     shape: Shape
     grid: GridSpec | None = None
     jumuah: JumuahSpec | None = None
     rules: RulesSpec | None = None
     widget: WidgetSpec | None = None
+    bespoke: BespokeSpec | None = None
 
     @model_validator(mode="after")
     def _check_shape(self) -> "SourceConfig":
@@ -75,6 +80,8 @@ class SourceConfig(BaseModel):
             raise ValueError("shape 'rules' requires a rules spec")
         if self.shape == "widget" and self.widget is None:
             raise ValueError("shape 'widget' requires a widget spec")
+        if self.shape == "bespoke" and self.bespoke is None:
+            raise ValueError("shape 'bespoke' requires a bespoke spec")
         return self
 
     @classmethod

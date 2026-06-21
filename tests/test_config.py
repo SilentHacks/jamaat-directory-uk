@@ -44,3 +44,13 @@ def test_author_settings_have_defaults_and_env_overrides(monkeypatch):
     assert s2.author_harness == "claude-code"
     assert s2.author_max_calls == 3
     get_settings.cache_clear()
+
+
+def test_author_fallback_settings_defaults():
+    from directory.config import Settings
+
+    s = Settings()
+    assert s.author_fallback_harness == "agentic"
+    assert s.author_page_budget == 8
+    assert s.author_token_budget == 200_000
+    assert str(s.bespoke_dir) == "data/bespoke"

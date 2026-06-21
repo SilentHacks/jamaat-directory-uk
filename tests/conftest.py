@@ -51,3 +51,20 @@ class FakeHarness:
         self.calls.append(model)
         text = self.script.get(model, "") if isinstance(self.script, dict) else self.script
         return HarnessResult(text, model, True)
+
+
+class FakeBrowsingHarness:
+    """AuthorHarness double for the stage-4 fallback. Returns `text` (an envelope,
+    optionally with `module_code`). Set ok=False to simulate a budget bail."""
+
+    name = "fake-agentic"
+
+    def __init__(self, text: str = "", *, ok: bool = True, error: str | None = None):
+        self.text = text
+        self.ok = ok
+        self.error = error
+        self.calls: list[str] = []
+
+    def run(self, prompt: str, *, model: str) -> HarnessResult:
+        self.calls.append(model)
+        return HarnessResult(self.text, model, self.ok, error=self.error)

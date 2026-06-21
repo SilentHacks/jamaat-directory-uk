@@ -54,3 +54,49 @@ def build_author_prompt(
     parts.append("")
     parts.append(_SCHEMA_HINT)
     return "\n".join(parts)
+
+
+_BROWSE_SCHEMA_HINT = f"""\
+You may navigate the live website to locate the timetable. Return ONE JSON object
+and nothing else (no prose, no code fences).
+
+For a standard layout, return:
+{{
+  "url": "<the page the timetable lives on>",
+  "config": {{ "shape": "html_table" | "html_repeated" | "rules" | "widget", ... }}
+}}
+(use the same config fields as the single-shot schema: grid/columns, jumuah, rules,
+widget — 0-based "index" for html_table, CSS "selector" for html_repeated).
+
+Only when no standard shape fits a genuinely unique site, return a bespoke module:
+{{
+  "url": "<the timetable page>",
+  "config": {{"shape": "bespoke", "bespoke": {{"module": "<snake_case_key>"}}}},
+  "module_code": "<a self-contained Python module>"
+}}
+The module MUST, at import, call register_bespoke("<snake_case_key>", fn) where
+fn(html, *, year, month) returns an ExtractionResult of Cell(date, prayer, kind,
+time) rows. Import what you need from:
+  from directory.ingest.extractors.bespoke import register_bespoke
+  from directory.ingest.extractors.engine import Cell, ExtractionResult
+  from directory.domain import Prayer
+  from directory.ingest.normalize import parse_date, parse_time
+
+Rules:
+- "prayer" is exactly one of: {_PRAYERS}.
+- "kind" is "jamaah" (congregation / iqamah) or "begin" (adhan / start time).
+- Times are 24-hour "HH:MM".
+- If you cannot find a timetable within your budget, output exactly {{}}.
+"""
+
+
+def build_browse_prompt(bundle: CandidateBundle) -> str:
+    return "\n".join(
+        [
+            "You are a browsing agent. Find a UK mosque's congregational (jamaah) "
+            "prayer timetable on its live website and map it into an extraction config.",
+            f"Mosque website: {bundle.base_url}",
+            "",
+            _BROWSE_SCHEMA_HINT,
+        ]
+    )

@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     author_model_cheap: str = "anthropic/claude-haiku-4-5"
     author_model_strong: str = "anthropic/claude-opus-4-8"
     author_max_calls: int = 50
+    author_fallback_harness: str = "agentic"
+    author_page_budget: int = 8
+    author_token_budget: int = 200_000
+    bespoke_dir: Path = Path("data/bespoke")
 
     @property
     def database_url(self) -> str:

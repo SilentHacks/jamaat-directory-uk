@@ -5,6 +5,7 @@ import typer
 from directory.config import Settings
 from directory.db import init_db, make_engine
 from directory.ingest.author import author_mosque, run_authoring
+from directory.ingest.bespoke_store import load_bespoke
 from directory.ingest.discover import discover_mosque, run_discovery
 from directory.ingest.harness import get_harness
 from directory.ingest.mib import clean_mib_export, write_seed_file
@@ -67,6 +68,7 @@ def extract(
 ) -> None:
     """Run the deterministic daily extract over authored sources."""
     engine = _engine_from_env()
+    load_bespoke(Settings().bespoke_dir)
     if source_id is not None:
         outcomes = [extract_source(engine, source_id, horizon_days=horizon_days)]
     else:
@@ -112,6 +114,7 @@ def author(
     mosque_id: str | None = typer.Option(None, "--mosque-id", help="Author one mosque"),  # noqa: B008
     max_calls: int | None = typer.Option(None, "--max-calls", help="Per-run harness call budget"),  # noqa: B008
     horizon_days: int = typer.Option(60, "--horizon-days", help="Verification horizon"),  # noqa: B008
+    agentic: bool = typer.Option(False, "--agentic", help="Enable the stage-4 agentic fallback"),  # noqa: B008
 ) -> None:
     """Single-shot authoring of candidate sources via the agent harness."""
     settings = Settings()
@@ -119,16 +122,26 @@ def author(
     harness = get_harness(settings.author_harness)
     models = (settings.author_model_cheap, settings.author_model_strong)
     root = settings.candidate_dir
+    fb_name = settings.author_fallback_harness if agentic else None
     if mosque_id is not None:
+        fallback = (
+            get_harness(fb_name, page_budget=settings.author_page_budget,
+                        token_budget=settings.author_token_budget)
+            if fb_name else None
+        )
         outcomes = [
             author_mosque(
-                engine, mosque_id, harness=harness, candidate_root=root,
-                models=models, horizon_days=horizon_days,
+                engine, mosque_id, harness=harness, candidate_root=root, models=models,
+                fallback=fallback, fallback_model=settings.author_model_strong,
+                bespoke_root=settings.bespoke_dir, horizon_days=horizon_days,
             )
         ]
     else:
         outcomes = run_authoring(
             engine, harness=harness, candidate_root=root, models=models,
+            fallback_name=fb_name, fallback_model=settings.author_model_strong,
+            bespoke_root=settings.bespoke_dir, page_budget=settings.author_page_budget,
+            token_budget=settings.author_token_budget,
             max_calls=max_calls or settings.author_max_calls, horizon_days=horizon_days,
         )
     for o in outcomes:
