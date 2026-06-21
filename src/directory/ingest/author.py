@@ -1,17 +1,19 @@
 # src/directory/ingest/author.py
 import json
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
 
 from directory import repository as repo
 from directory.db import session_scope
-from directory.ingest.bespoke_store import load_bespoke, save_module
-from directory.ingest.candidate_store import load_bundle
+from directory.ingest.discover import CandidateBundle
+from directory.ingest.extractors.bespoke import load_bespoke, save_module
 from directory.ingest.extractors.config_schema import SourceConfig
 from directory.ingest.fetch import fetch
-from directory.ingest.harness import AuthorHarness, get_harness
+from directory.ingest.harness import AuthorHarness
+from directory.ingest.jsonscan import first_json_object
 from directory.ingest.prompt import build_author_prompt, build_browse_prompt
 from directory.ingest.runner import extract_source
 from directory.models import Mosque
@@ -25,37 +27,32 @@ class AuthorOutcome:
     detail: str | None = None
 
 
-def extract_json(text: str) -> str | None:
-    """Return the first balanced top-level JSON object in ``text``, or None.
+@dataclass
+class _Stage:
+    """One rung of the §5.1 funnel: a harness, the models to try on it, the prompt
+    builder, and whether a bespoke module may be authored from it."""
 
-    Brace-counts while skipping anything inside double-quoted strings, so prose,
-    code fences, and string values containing braces do not confuse it.
-    """
-    start = text.find("{")
-    if start == -1:
-        return None
-    depth = 0
-    in_str = False
-    esc = False
-    for i in range(start, len(text)):
-        ch = text[i]
-        if in_str:
-            if esc:
-                esc = False
-            elif ch == "\\":
-                esc = True
-            elif ch == '"':
-                in_str = False
-            continue
-        if ch == '"':
-            in_str = True
-        elif ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                return text[start : i + 1]
-    return None
+    harness: AuthorHarness
+    models: tuple[str, ...]
+    prompt: Callable[[CandidateBundle], str]
+    allow_bespoke: bool
+
+
+@dataclass
+class _Ctx:
+    """Everything an attempt needs beyond the per-stage inputs, threaded once."""
+
+    engine: object
+    bespoke_root: Path | None
+    today: date | None
+    horizon_days: int
+    fetcher: object
+    renderer: object
+
+
+def extract_json(text: str) -> str | None:
+    """Return the first balanced top-level JSON object in ``text``, or None."""
+    return first_json_object(text)
 
 
 def _parse_output(raw: str, default_url: str) -> tuple[str, SourceConfig, str | None]:
@@ -81,18 +78,14 @@ def _parse_output(raw: str, default_url: str) -> tuple[str, SourceConfig, str | 
 
 
 def _attempt(
-    engine,
+    ctx: _Ctx,
     mosque_id: str,
     res,
     default_url: str,
     harness_name: str,
     model: str,
     *,
-    bespoke_root: Path | None,
-    today: date | None,
-    horizon_days: int,
-    fetcher,
-    renderer,
+    allow_bespoke: bool,
 ) -> tuple[AuthorOutcome | None, str | None]:
     """Verify one harness reply. Returns (outcome, None) when it terminally
     authored/reviewed, else (None, detail) to escalate to the next stage."""
@@ -104,15 +97,15 @@ def _attempt(
         return None, f"invalid config: {exc}"
 
     if config.shape == "bespoke":
-        if bespoke_root is None:
+        if not allow_bespoke or ctx.bespoke_root is None:
             return None, "bespoke shape only allowed from the agentic fallback"
         if not module_code:
             return None, "bespoke config without module_code"
-        save_module(config.bespoke.module, module_code, root=bespoke_root)
-        load_bespoke(bespoke_root)
+        save_module(config.bespoke.module, module_code, root=ctx.bespoke_root)
+        load_bespoke(ctx.bespoke_root)
 
     now = datetime.now(tz=UTC).isoformat(timespec="seconds")
-    with session_scope(engine) as s:
+    with session_scope(ctx.engine) as s:
         repo.create_or_update_source(
             s, source_id=mosque_id, mosque_id=mosque_id, url=chosen_url,
             platform=None, shape=config.shape, config=config.to_json(),
@@ -123,8 +116,8 @@ def _attempt(
         )
 
     result = extract_source(
-        engine, mosque_id, today=today, horizon_days=horizon_days,
-        fetcher=fetcher, renderer=renderer,
+        ctx.engine, mosque_id, today=ctx.today, horizon_days=ctx.horizon_days,
+        fetcher=ctx.fetcher, renderer=ctx.renderer,
     )
     if result.triage_status in {"authored", "review"}:
         return AuthorOutcome(mosque_id, result.triage_status, model), None
@@ -152,7 +145,7 @@ def author_mosque(
     if src is None or status != "candidate":
         return AuthorOutcome(mosque_id, "skipped", detail=f"status={status}")
 
-    bundle = load_bundle(mosque_id, root=candidate_root)
+    bundle = CandidateBundle.load(mosque_id, candidate_root)
     if bundle is None or not bundle.candidates:
         with session_scope(engine) as s:
             repo.set_source_state(
@@ -160,29 +153,26 @@ def author_mosque(
             )
         return AuthorOutcome(mosque_id, "no_candidate")
 
-    prompt = build_author_prompt(bundle)
+    stages = [_Stage(harness, models, build_author_prompt, allow_bespoke=False)]
+    if fallback is not None:
+        stages.append(
+            _Stage(fallback, (fallback_model,), build_browse_prompt, allow_bespoke=True)
+        )
+
+    ctx = _Ctx(engine, bespoke_root, today, horizon_days, fetcher, renderer)
     default_url = bundle.candidates[0].url
     detail: str | None = None
 
-    for model in models:
-        res = harness.run(prompt, model=model)
-        outcome, detail = _attempt(
-            engine, mosque_id, res, default_url, harness.name, model,
-            bespoke_root=None, today=today, horizon_days=horizon_days,
-            fetcher=fetcher, renderer=renderer,
-        )
-        if outcome is not None:
-            return outcome
-
-    if fallback is not None:
-        res = fallback.run(build_browse_prompt(bundle), model=fallback_model)
-        outcome, detail = _attempt(
-            engine, mosque_id, res, default_url, fallback.name, fallback_model,
-            bespoke_root=bespoke_root, today=today, horizon_days=horizon_days,
-            fetcher=fetcher, renderer=renderer,
-        )
-        if outcome is not None:
-            return outcome
+    for stage in stages:
+        prompt = stage.prompt(bundle)
+        for model in stage.models:
+            res = stage.harness.run(prompt, model=model)
+            outcome, detail = _attempt(
+                ctx, mosque_id, res, default_url, stage.harness.name, model,
+                allow_bespoke=stage.allow_bespoke,
+            )
+            if outcome is not None:
+                return outcome
 
     with session_scope(engine) as s:
         repo.set_source_state(
@@ -199,16 +189,12 @@ def order_by_city_size(mosques: list[Mosque]) -> list[Mosque]:
 def run_authoring(
     engine,
     *,
-    harness: AuthorHarness | None = None,
-    harness_name: str = "opencode",
-    fallback: AuthorHarness | None = None,
-    fallback_name: str | None = None,
-    fallback_model: str = "agentic",
-    bespoke_root: Path | None = None,
-    page_budget: int = 8,
-    token_budget: int = 200_000,
+    harness: AuthorHarness,
     candidate_root: Path,
     models: tuple[str, ...],
+    fallback: AuthorHarness | None = None,
+    fallback_model: str = "agentic",
+    bespoke_root: Path | None = None,
     max_calls: int = 50,
     priority=order_by_city_size,
     today: date | None = None,
@@ -216,9 +202,6 @@ def run_authoring(
     fetcher=fetch,
     renderer=None,
 ) -> list[AuthorOutcome]:
-    harness = harness or get_harness(harness_name)
-    if fallback is None and fallback_name:
-        fallback = get_harness(fallback_name, page_budget=page_budget, token_budget=token_budget)
     with session_scope(engine) as s:
         candidates = repo.candidate_sources(s)
         mosques = [repo.get_mosque(s, c.mosque_id) for c in candidates]

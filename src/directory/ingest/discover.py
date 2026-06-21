@@ -1,4 +1,5 @@
-from dataclasses import dataclass
+import json
+from dataclasses import asdict, dataclass
 from datetime import date
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
@@ -9,10 +10,8 @@ from bs4 import BeautifulSoup
 from directory import repository as repo
 from directory.db import session_scope
 from directory.ingest.extractors.platforms import base as platforms
-from directory.ingest.fetch import fetch
+from directory.ingest.fetch import USER_AGENT, fetch
 from directory.ingest.runner import extract_source
-
-_UA = "jamaat-directory-uk/0.1 (+https://github.com/SilentHacks/jamaat-directory-uk)"
 
 
 @dataclass
@@ -30,7 +29,7 @@ def check_liveness(
     owns = client is None
     client = client or httpx.Client(timeout=timeout, follow_redirects=True)
     try:
-        resp = client.get(url, headers={"User-Agent": _UA})
+        resp = client.get(url, headers={"User-Agent": USER_AGENT})
         alive = 200 <= resp.status_code < 400
         return LivenessResult(url, str(resp.url), resp.status_code, alive)
     except httpx.HTTPError as exc:
@@ -65,6 +64,24 @@ class CandidateBundle:
     mosque_id: str
     base_url: str
     candidates: list["Candidate"]
+
+    def save(self, root: Path) -> Path:
+        root.mkdir(parents=True, exist_ok=True)
+        path = root / f"{self.mosque_id}.json"
+        path.write_text(json.dumps(asdict(self), ensure_ascii=False), encoding="utf-8")
+        return path
+
+    @classmethod
+    def load(cls, mosque_id: str, root: Path) -> "CandidateBundle | None":
+        path = root / f"{mosque_id}.json"
+        if not path.exists():
+            return None
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return cls(
+            mosque_id=data["mosque_id"],
+            base_url=data["base_url"],
+            candidates=[Candidate(**c) for c in data["candidates"]],
+        )
 
 
 def _keyword_links(html: str, base_url: str) -> list[str]:
@@ -185,14 +202,10 @@ def discover_mosque(
         )
         return DiscoverOutcome(mosque_id, result.triage_status, match.platform)
 
-    # Local import breaks the discover <-> candidate_store cycle: candidate_store
-    # imports Candidate/CandidateBundle from this module at import time.
-    from directory.ingest.candidate_store import save_bundle
-
     bundle = gather_candidates(
         mosque_id, home_url, homepage_html=homepage_html, client=client, fetcher=fetcher
     )
-    save_bundle(bundle, root=candidate_root)
+    bundle.save(candidate_root)
     best_url = bundle.candidates[0].url if bundle.candidates else None
     with session_scope(engine) as s:
         repo.create_or_update_source(
