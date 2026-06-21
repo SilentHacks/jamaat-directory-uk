@@ -8,7 +8,9 @@ from directory.ingest.materialize import OccurrenceRow
 
 # Plausible jamaah windows in minutes-from-midnight, inclusive.
 _WINDOWS: dict[str, tuple[int, int]] = {
-    "fajr": (2 * 60, 7 * 60 + 30),
+    # Floor 00:30: high-latitude UK summer Fajr (e.g. Aberdeen, 57°N) is genuinely
+    # ~01:00–01:30 near the solstice. The monotonic check still guards ordering.
+    "fajr": (30, 7 * 60 + 30),
     "dhuhr": (11 * 60 + 30, 15 * 60),
     "asr": (13 * 60, 19 * 60 + 30),
     "maghrib": (15 * 60 + 30, 22 * 60 + 30),

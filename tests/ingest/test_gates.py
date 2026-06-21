@@ -89,6 +89,20 @@ def test_out_of_window_value_auto_rejects():
     assert res.lane == "auto_reject"
 
 
+def test_high_latitude_summer_fajr_is_in_window():
+    # Aberdeen (57°N) near the solstice: Fajr ~01:20 is real data, not implausible.
+    occ = _day("2026-06-21", ["01:20", "13:30", "18:30", "21:30", "23:00"])
+    occ += _day("2026-06-22", ["01:21", "13:30", "18:31", "21:31", "23:00"])
+    res = run_gates(GRID_CFG, ExtractionResult(), occ)
+    assert res.lane == "auto_accept"
+
+
+def test_fajr_below_window_floor_still_rejects():
+    occ = _day("2026-06-21", ["00:15", "13:30", "18:30", "21:30", "23:00"])  # 00:15 < 00:30
+    res = run_gates(GRID_CFG, ExtractionResult(), occ)
+    assert res.lane == "auto_reject"
+
+
 def test_malformed_jumuah_auto_rejects():
     occ = _day("2026-06-21", ["05:00", "13:30", "18:30", "21:30", "23:00"])
     occ += _jumuah("2026-06-26", ["13:00", "12:30"])  # sessions not ordered
