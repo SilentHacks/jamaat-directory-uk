@@ -9,6 +9,7 @@ from bs4 import BeautifulSoup
 
 from directory import repository as repo
 from directory.db import session_scope
+from directory.ingest.blocklist import is_blocklisted
 from directory.ingest.extractors.platforms import base as platforms
 from directory.ingest.fetch import USER_AGENT, fetch
 from directory.ingest.runner import extract_source
@@ -84,7 +85,9 @@ class CandidateBundle:
         )
 
 
-def _keyword_links(html: str, base_url: str) -> list[str]:
+def _keyword_links(
+    html: str, base_url: str, *, blocklist: frozenset[str] | None = None
+) -> list[str]:
     soup = BeautifulSoup(html, "lxml")
     host = urlparse(base_url).netloc
     out: list[str] = []
@@ -96,6 +99,8 @@ def _keyword_links(html: str, base_url: str) -> list[str]:
             continue
         absolute = urljoin(base_url, href)
         if urlparse(absolute).netloc != host:
+            continue
+        if is_blocklisted(absolute, blocklist=blocklist):
             continue
         if absolute not in out:
             out.append(absolute)
@@ -126,10 +131,11 @@ def gather_candidates(
     client: httpx.Client | None = None,
     fetcher=fetch,
     max_candidates: int = 5,
+    blocklist: frozenset[str] | None = None,
 ) -> CandidateBundle:
     targets: list[str] = [urljoin(base_url, p) for p in RANKED_PATHS]
     if homepage_html:
-        for link in _keyword_links(homepage_html, base_url):
+        for link in _keyword_links(homepage_html, base_url, blocklist=blocklist):
             if link not in targets:
                 targets.append(link)
 
@@ -166,6 +172,7 @@ def discover_mosque(
     candidate_root: Path,
     today: date | None = None,
     horizon_days: int = 60,
+    blocklist: frozenset[str] | None = None,
 ) -> DiscoverOutcome:
     with session_scope(engine) as s:
         mosque = repo.get_mosque(s, mosque_id)
@@ -180,6 +187,18 @@ def discover_mosque(
         return DiscoverOutcome(mosque_id, "dead", None, detail=live.error)
 
     home_url = live.final_url or website
+
+    # Dead-end the resolved host if it is a social/aggregator/maps domain: no
+    # fetch, no AI. Checks the *resolved* URL so redirects to a dead host count.
+    if is_blocklisted(home_url, blocklist=blocklist):
+        with session_scope(engine) as s:
+            repo.create_or_update_source(
+                s, source_id=mosque_id, mosque_id=mosque_id, url=home_url,
+                platform=None, shape=None, config=None, requires_js=False,
+                triage_status="blocklisted",
+            )
+        return DiscoverOutcome(mosque_id, "blocklisted", None)
+
     fetched = fetcher(home_url, client=client)
     homepage_html = fetched.html or ""
 
@@ -203,7 +222,8 @@ def discover_mosque(
         return DiscoverOutcome(mosque_id, result.triage_status, match.platform)
 
     bundle = gather_candidates(
-        mosque_id, home_url, homepage_html=homepage_html, client=client, fetcher=fetcher
+        mosque_id, home_url, homepage_html=homepage_html, client=client,
+        fetcher=fetcher, blocklist=blocklist,
     )
     bundle.save(candidate_root)
     best_url = bundle.candidates[0].url if bundle.candidates else None
@@ -230,6 +250,7 @@ def run_discovery(
     candidate_root: Path,
     today: date | None = None,
     horizon_days: int = 60,
+    blocklist: frozenset[str] | None = None,
 ) -> list[DiscoverOutcome]:
     with session_scope(engine) as s:
         ids = [m.id for m in repo.mosques_for_discovery(s)]
@@ -242,6 +263,7 @@ def run_discovery(
             candidate_root=candidate_root,
             today=today,
             horizon_days=horizon_days,
+            blocklist=blocklist,
         )
         for mid in ids
     ]

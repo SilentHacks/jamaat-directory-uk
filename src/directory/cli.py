@@ -5,6 +5,7 @@ import typer
 from directory.config import Settings
 from directory.db import init_db, make_engine
 from directory.ingest.author import author_mosque, run_authoring
+from directory.ingest.blocklist import load_blocklist
 from directory.ingest.discover import discover_mosque, run_discovery
 from directory.ingest.extractors.bespoke import load_bespoke
 from directory.ingest.harness import OpenCodeAgenticHarness, OpenCodeHarness
@@ -102,12 +103,15 @@ def discover(
     settings = Settings()
     engine = make_engine(settings.database_url)
     root = settings.candidate_dir
+    blocklist = load_blocklist(settings.blocklist_path)
     if mosque_id is not None:
         outcomes = [
-            discover_mosque(engine, mosque_id, candidate_root=root, horizon_days=horizon_days)
+            discover_mosque(engine, mosque_id, candidate_root=root,
+                            horizon_days=horizon_days, blocklist=blocklist)
         ]
     else:
-        outcomes = run_discovery(engine, candidate_root=root, horizon_days=horizon_days)
+        outcomes = run_discovery(engine, candidate_root=root,
+                                 horizon_days=horizon_days, blocklist=blocklist)
     for o in outcomes:
         typer.echo(f"{o.mosque_id}: outcome={o.outcome} platform={o.platform}")
     typer.echo(f"Discovered {len(outcomes)} mosque(s)")

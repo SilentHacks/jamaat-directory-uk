@@ -84,6 +84,34 @@ def test_dead_site_nulls_website(engine, tmp_path):
         assert repo.get_mosque(s, "dead").website_url is None
 
 
+def test_blocklisted_after_redirect_short_circuits(engine, tmp_path):
+    fetch_calls = []
+
+    def _spy_fetcher(url, **kwargs):
+        from directory.ingest.fetch import FetchResult
+        fetch_calls.append(url)
+        return FetchResult(url, 200, "<html></html>", "hash")
+
+    with session_scope(engine) as s:
+        s.add(Mosque(id="fb", name="fb", lat=51.0, lng=-1.0,
+                     website_url="https://masjid.example/"))
+    # liveness resolves the seed to a facebook page (redirect target is blocklisted)
+    def _handler(r):
+        if "masjid.example" in str(r.url):
+            return httpx.Response(302, headers={"Location": "https://www.facebook.com/x"})
+        return httpx.Response(200, text="ok")
+
+    client = httpx.Client(
+        transport=httpx.MockTransport(_handler), follow_redirects=True
+    )
+    out = discover_mosque(engine, "fb", fetcher=_spy_fetcher, client=client,
+                          candidate_root=tmp_path)
+    assert out.outcome == "blocklisted"
+    assert fetch_calls == []  # no fetch, no AI
+    with session_scope(engine) as s:
+        assert repo.get_source(s, "fb").triage_status == "blocklisted"
+
+
 def test_run_discovery_covers_all(engine, tmp_path):
     with session_scope(engine) as s:
         s.add_all([
