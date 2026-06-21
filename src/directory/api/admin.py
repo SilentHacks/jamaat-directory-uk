@@ -6,7 +6,7 @@ from directory.config import get_settings
 from directory.db import session_scope
 from directory.ingest.author import author_mosque
 from directory.ingest.discover import discover_mosque
-from directory.ingest.harness import get_harness
+from directory.ingest.harness import OpenCodeHarness
 from directory.ingest.runner import extract_source
 from directory.models import Source
 from directory.repository import get_mosque, get_source, iter_all_mosques, sources_in_review
@@ -72,7 +72,7 @@ def author_mosque_endpoint(mosque_id: str, engine: Engine = Depends(get_engine))
             raise HTTPException(404, "mosque not found")
     out = author_mosque(
         engine, mosque_id,
-        harness=get_harness(settings.author_harness),
+        harness=OpenCodeHarness(),
         candidate_root=settings.candidate_dir,
         models=(settings.author_model_cheap, settings.author_model_strong),
     )
