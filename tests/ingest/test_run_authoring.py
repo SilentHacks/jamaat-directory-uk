@@ -93,6 +93,35 @@ def test_budget_caps_spend_and_is_resumable(engine, tmp_path):
         assert repo.candidate_sources(s) == []
 
 
+def test_budget_unit_reserve_refund_caps():
+    from directory.ingest.author import Budget
+
+    b = Budget(2)
+    assert b.try_reserve() is True
+    assert b.try_reserve() is True
+    assert b.try_reserve() is False  # cap reached
+    b.refund()
+    assert b.try_reserve() is True  # slot freed
+    assert b.spent == 2
+
+
+def test_budget_caps_chargeable_calls_under_concurrency(engine, tmp_path):
+    for i in range(20):
+        _candidate(engine, f"m{i:02d}", "London", tmp_path)
+    harness = FakeHarness(_good_output("https://x.example/prayer-times"))
+
+    outs = run_authoring(engine, harness=harness, candidate_root=tmp_path, models=("cheap",),
+                         max_calls=5, concurrency=8, today=date(2026, 6, 1), horizon_days=5,
+                         fetcher=_fetcher)
+
+    chargeable = [o for o in outs if o.outcome not in {"no_candidate", "skipped"}]
+    assert len(chargeable) <= 5  # spend cap holds under concurrency
+    assert len(harness.calls) <= 5  # no more than max_calls paid harness invocations
+    with session_scope(engine) as s:
+        # the un-budgeted candidates remain resumable
+        assert len(repo.candidate_sources(s)) >= 15
+
+
 def test_run_authoring_escalates_to_fallback(engine, tmp_path):
     _candidate(engine, "m1", "London", tmp_path)
     fallback = FakeBrowsingHarness(_good_output("https://m1.example/prayer-times"))
