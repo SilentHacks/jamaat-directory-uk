@@ -24,11 +24,11 @@ def validate_websites(engine, *, client: httpx.Client | None = None) -> Validati
         summary.checked += 1
         res = check_liveness(url, client=client)
         if not res.alive:
-            with session_scope(engine) as s:
+            with session_scope(engine, write=True) as s:
                 repo.update_mosque_website(s, mosque_id, None)
             summary.dropped += 1
         elif res.final_url and res.final_url != url:
-            with session_scope(engine) as s:
+            with session_scope(engine, write=True) as s:
                 repo.update_mosque_website(s, mosque_id, res.final_url)
             summary.repaired += 1
         else:

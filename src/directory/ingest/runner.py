@@ -21,7 +21,7 @@ class ExtractOutcome:
 
 
 def _reauthor(engine, source_id, error) -> ExtractOutcome:
-    with session_scope(engine) as s:
+    with session_scope(engine, write=True) as s:
         repo.set_source_state(
             s, source_id, triage_status="needs_reauthor", last_status="error", last_error=error
         )
@@ -65,7 +65,7 @@ def extract_source(
 
     activate = gate.lane == "auto_accept" or (gate.lane == "review" and accept_review)
     if activate:
-        with session_scope(engine) as s:
+        with session_scope(engine, write=True) as s:
             n = repo.replace_source_occurrences(s, source_id, mosque_id, rows)
             repo.set_source_state(
                 s, source_id, triage_status="authored", confidence=gate.confidence,
@@ -77,7 +77,7 @@ def extract_source(
 
     if gate.lane == "review":
         reason = "; ".join(gate.reasons)
-        with session_scope(engine) as s:
+        with session_scope(engine, write=True) as s:
             repo.set_source_state(
                 s, source_id, triage_status="review", confidence=gate.confidence,
                 review_reason=reason, last_status="review", last_fetched_at=now,

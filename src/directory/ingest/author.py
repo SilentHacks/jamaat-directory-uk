@@ -105,7 +105,7 @@ def _attempt(
         load_bespoke(ctx.bespoke_root)
 
     now = datetime.now(tz=UTC).isoformat(timespec="seconds")
-    with session_scope(ctx.engine) as s:
+    with session_scope(ctx.engine, write=True) as s:
         repo.create_or_update_source(
             s, source_id=mosque_id, mosque_id=mosque_id, url=chosen_url,
             platform=None, shape=config.shape, config=config.to_json(),
@@ -147,7 +147,7 @@ def author_mosque(
 
     bundle = CandidateBundle.load(mosque_id, candidate_root)
     if bundle is None or not bundle.candidates:
-        with session_scope(engine) as s:
+        with session_scope(engine, write=True) as s:
             repo.set_source_state(
                 s, mosque_id, triage_status="no_timetable", last_status="no_candidate"
             )
@@ -174,7 +174,7 @@ def author_mosque(
             if outcome is not None:
                 return outcome
 
-    with session_scope(engine) as s:
+    with session_scope(engine, write=True) as s:
         repo.set_source_state(
             s, mosque_id, triage_status="needs_reauthor", last_status="error", last_error=detail
         )

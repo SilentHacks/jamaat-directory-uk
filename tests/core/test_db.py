@@ -35,6 +35,34 @@ def test_session_scope_commits(tmp_path):
     assert count == 1
 
 
+def test_wal_mode_enabled(tmp_path):
+    engine = make_engine(f"sqlite:///{tmp_path/'t.db'}")
+    init_db(engine)
+    with session_scope(engine) as s:
+        mode = s.execute(text("PRAGMA journal_mode")).scalar()
+    assert mode.lower() == "wal"
+
+
+def test_concurrent_writes_through_lock_no_corruption(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+
+    engine = make_engine(f"sqlite:///{tmp_path/'t.db'}")
+    init_db(engine)
+
+    def _insert(i: int) -> None:
+        with session_scope(engine, write=True) as s:
+            s.execute(text(
+                "INSERT INTO mosque (id, name, lat, lng) VALUES (:id, 'A', 1.0, 2.0)"
+            ), {"id": f"m{i}"})
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(_insert, range(200)))
+
+    with session_scope(engine) as s:
+        count = s.execute(text("SELECT count(*) FROM mosque")).scalar()
+    assert count == 200
+
+
 def test_foreign_keys_enforced(tmp_path):
     from sqlalchemy import text
     from sqlalchemy.exc import IntegrityError

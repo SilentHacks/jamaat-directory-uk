@@ -265,7 +265,7 @@ def discover_mosque(
 
     live = check_liveness(website, client=client)
     if not live.alive:
-        with session_scope(engine) as s:
+        with session_scope(engine, write=True) as s:
             repo.update_mosque_website(s, mosque_id, None)
         return DiscoverOutcome(mosque_id, "dead", None, detail=live.error)
 
@@ -274,7 +274,7 @@ def discover_mosque(
     # Dead-end the resolved host if it is a social/aggregator/maps domain: no
     # fetch, no AI. Checks the *resolved* URL so redirects to a dead host count.
     if is_blocklisted(home_url, blocklist=blocklist):
-        with session_scope(engine) as s:
+        with session_scope(engine, write=True) as s:
             repo.create_or_update_source(
                 s, source_id=mosque_id, mosque_id=mosque_id, url=home_url,
                 platform=None, shape=None, config=None, requires_js=False,
@@ -302,7 +302,7 @@ def discover_mosque(
     best = _best_verified(pages, fetched_pages, today=today, horizon_days=horizon_days)
     if best is not None:
         match = best.match
-        with session_scope(engine) as s:
+        with session_scope(engine, write=True) as s:
             repo.create_or_update_source(
                 s,
                 source_id=mosque_id,
@@ -323,7 +323,7 @@ def discover_mosque(
     bundle = _bundle_from_pages(mosque_id, home_url, fetched_pages)
     bundle.save(candidate_root)
     best_url = bundle.candidates[0].url if bundle.candidates else None
-    with session_scope(engine) as s:
+    with session_scope(engine, write=True) as s:
         repo.create_or_update_source(
             s,
             source_id=mosque_id,
