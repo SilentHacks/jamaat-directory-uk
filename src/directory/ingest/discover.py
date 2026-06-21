@@ -46,7 +46,17 @@ def check_liveness(
 
 RANKED_PATHS: tuple[str, ...] = (
     "/prayer-times",
+    "/prayer-time",
+    "/prayer_times",
+    "/prayer_time",
+    "/prayertimes",
+    "/prayers",
     "/timetable",
+    "/timetables",
+    "/time-table",
+    "/time-tables",
+    "/time_table",
+    "/time_tables",
     "/salah",
     "/namaz",
     "/prayer",

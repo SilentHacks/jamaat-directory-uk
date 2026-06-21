@@ -105,7 +105,7 @@ def parse_date(raw: str | None, *, year: int, month: int | None = None) -> date 
     return None
 
 
-_PUNCT_REMOVE_RE = re.compile(r"[''\.()]")
+_PUNCT_REMOVE_RE = re.compile(r"[''‘’ʼʿʾ\.()`]")
 _PUNCT_SPACE_RE = re.compile(r"[-/]")
 
 _PRAYER_SYNONYMS: dict[Prayer, set[str]] = {
@@ -114,7 +114,7 @@ _PRAYER_SYNONYMS: dict[Prayer, set[str]] = {
         "الفجر", "فجر"
     },
     Prayer.DHUHR: {
-        "dhuhr", "zuhr", "duhr", "zohr", "zuhar", "duhar", "zuhur",
+        "dhuhr", "zuhr", "duhr", "zohr", "zohar", "zuhar", "duhar", "zuhur",
         "الظهر", "ظهر"
     },
     Prayer.ASR: {"asr", "asar", "العصر", "عصر"},
