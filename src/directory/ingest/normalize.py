@@ -68,6 +68,22 @@ def parse_offset(raw: str | None) -> int | None:
     return -minutes if sign in _MINUS else minutes
 
 
+def source_time_values(text: str | None) -> set[str]:
+    """Every clock time mentioned in ``text``, as the set of plausible 24h values.
+    An unmarked 12h time like "6:00" contributes both readings ({"06:00","18:00"})
+    so a value-based self-match is robust to 12h/24h source formatting."""
+    out: set[str] = set()
+    if not text:
+        return out
+    for m in _TIME_RE.finditer(_ascii_digits(str(text)).lower()):
+        token = m.group(0)
+        for prefer_pm in (None, True, False):
+            t = parse_time(token, prefer_pm=prefer_pm)
+            if t is not None:
+                out.add(t)
+    return out
+
+
 _MONTH_NAMES = [
     "january", "february", "march", "april", "may", "june",
     "july", "august", "september", "october", "november", "december",

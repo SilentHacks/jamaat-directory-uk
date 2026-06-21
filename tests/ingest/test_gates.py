@@ -119,6 +119,15 @@ def test_self_match_failure_auto_rejects():
     assert any("self-match" in r for r in res.reasons)
 
 
+def test_self_match_accepts_12_hour_source_times():
+    # The source renders 12-hour times with no 24h substring present; self-match
+    # is value-based, so a materialized 18:00 still matches the page's "6:00".
+    occ = _day("2026-06-21", ["05:00", "13:30", "18:00", "21:30", "23:00"])
+    html = "Fajr 5:00 | Dhuhr 1:30 | Asr 6:00 | Maghrib 9:30 | Isha 11:00"
+    res = run_gates(GRID_CFG, ExtractionResult(), occ, html_text=html)
+    assert res.lane == "auto_accept"
+
+
 def _mark_derived(occ, prayer):
     return [
         OccurrenceRow(o.date, o.prayer, o.session_idx, o.jamaah_time, o.begin_time, o.label,
