@@ -1,8 +1,6 @@
 from types import SimpleNamespace
 
-import pytest
-
-from directory.ingest.harness import OpenCodeHarness, get_harness, register_harness
+from directory.ingest.harness import OpenCodeAgenticHarness, OpenCodeHarness
 
 
 def test_opencode_returns_stdout_on_success():
@@ -42,25 +40,8 @@ def test_opencode_catches_subprocess_error():
     assert "OSError" in res.error
 
 
-def test_get_harness_default_is_opencode():
-    h = get_harness()
-    assert h.name == "opencode"
-
-
-def test_get_harness_unknown_raises():
-    with pytest.raises(ValueError):
-        get_harness("does-not-exist")
-
-
-def test_register_harness_adds_a_client():
-    class FakeCls:
-        name = "fake"
-
-        def run(self, prompt, *, model):  # pragma: no cover - not called here
-            raise NotImplementedError
-
-    register_harness("fake-task1", FakeCls)
-    assert get_harness("fake-task1").name == "fake"
+def test_opencode_name():
+    assert OpenCodeHarness().name == "opencode"
 
 
 def test_agentic_harness_uses_browse_agent_and_embeds_budget():
@@ -72,13 +53,12 @@ def test_agentic_harness_uses_browse_agent_and_embeds_budget():
         return SimpleNamespace(returncode=0, stdout='{"shape":"rules","rules":{"rules":[]}}',
                                stderr="")
 
-    from directory.ingest.harness import OpenCodeAgenticHarness
-
     res = OpenCodeAgenticHarness(
         runner=fake_runner, page_budget=5, token_budget=1000, timeout=300.0
     ).run("find the timetable", model="strong/model")
 
     assert res.ok is True
+    assert OpenCodeAgenticHarness().name == "agentic"
     assert seen["cmd"][:5] == ["opencode", "run", "--agent", "browse", "-m"]
     assert seen["cmd"][5] == "strong/model"
     prompt_arg = seen["cmd"][6]
@@ -88,15 +68,9 @@ def test_agentic_harness_uses_browse_agent_and_embeds_budget():
 
 
 def test_agentic_harness_reports_failure_on_nonzero_exit():
-    from directory.ingest.harness import OpenCodeAgenticHarness
-
     def fake_runner(cmd, **kwargs):
         return SimpleNamespace(returncode=1, stdout="", stderr="navigation blew up")
 
     res = OpenCodeAgenticHarness(runner=fake_runner).run("p", model="m")
     assert res.ok is False
     assert res.error == "navigation blew up"
-
-
-def test_agentic_harness_is_registered():
-    assert get_harness("agentic").name == "agentic"

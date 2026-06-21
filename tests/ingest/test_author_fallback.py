@@ -4,7 +4,6 @@ from datetime import date
 from directory import repository as repo
 from directory.db import session_scope
 from directory.ingest.author import author_mosque
-from directory.ingest.candidate_store import save_bundle
 from directory.ingest.discover import Candidate, CandidateBundle
 from directory.ingest.fetch import FetchResult
 from directory.models import Mosque, Occurrence, Source
@@ -48,7 +47,7 @@ def _fetcher(url, **kwargs):
 
 def test_fallback_authors_when_single_shot_fails(engine, tmp_path):
     _candidate_mosque(engine)
-    save_bundle(_bundle(), root=tmp_path)
+    _bundle().save(tmp_path)
     single = FakeHarness("garbage, not json")
     fallback = FakeBrowsingHarness(STD_OUTPUT)
 
@@ -69,7 +68,7 @@ def test_fallback_authors_when_single_shot_fails(engine, tmp_path):
 
 def test_no_fallback_keeps_phase4_behaviour(engine, tmp_path):
     _candidate_mosque(engine)
-    save_bundle(_bundle(), root=tmp_path)
+    _bundle().save(tmp_path)
 
     out = author_mosque(
         engine, "m1", harness=FakeHarness("not json at all"), candidate_root=tmp_path,
@@ -130,7 +129,7 @@ def _acme_fetcher(url, **kwargs):
 
 def test_fallback_authors_via_bespoke_module(engine, tmp_path):
     _candidate_mosque(engine)
-    save_bundle(_bundle(), root=tmp_path)
+    _bundle().save(tmp_path)
     bespoke_root = tmp_path / "bespoke"
 
     out = author_mosque(
@@ -150,7 +149,7 @@ def test_fallback_authors_via_bespoke_module(engine, tmp_path):
 
 def test_fallback_budget_bail_marks_needs_reauthor(engine, tmp_path):
     _candidate_mosque(engine)
-    save_bundle(_bundle(), root=tmp_path)
+    _bundle().save(tmp_path)
     bail = FakeBrowsingHarness("", ok=False, error="budget exceeded: 8 pages")
 
     out = author_mosque(
@@ -168,7 +167,7 @@ def test_fallback_budget_bail_marks_needs_reauthor(engine, tmp_path):
 
 def test_fallback_empty_object_on_overrun_marks_needs_reauthor(engine, tmp_path):
     _candidate_mosque(engine)
-    save_bundle(_bundle(), root=tmp_path)
+    _bundle().save(tmp_path)
     overrun = FakeBrowsingHarness("{}")  # agent emitted {} after exhausting its budget
 
     out = author_mosque(

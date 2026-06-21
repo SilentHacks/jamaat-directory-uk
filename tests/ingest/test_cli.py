@@ -1,11 +1,10 @@
-from pathlib import Path
-
 from typer.testing import CliRunner
 
 from directory.cli import app
+from tests.conftest import FIXTURES
 
 runner = CliRunner()
-FIXTURE = Path(__file__).parent / "fixtures" / "seed_sample.json"
+FIXTURE = FIXTURES / "seed_sample.json"
 
 
 def test_init_db_creates_file(tmp_path, monkeypatch):
@@ -25,7 +24,7 @@ def test_seed_loads_records(tmp_path, monkeypatch):
 
 
 def test_import_mib_writes_seed_file(tmp_path):
-    mib = Path(__file__).parent / "fixtures" / "mib_sample.json"
+    mib = FIXTURES / "mib_sample.json"
     out = tmp_path / "seed" / "mosques.json"
     result = runner.invoke(app, ["import-mib", "--input", str(mib), "--output", str(out)])
     assert result.exit_code == 0

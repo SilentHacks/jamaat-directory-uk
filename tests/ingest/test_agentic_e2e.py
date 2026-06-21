@@ -4,15 +4,13 @@ from datetime import date
 from directory import repository as repo
 from directory.db import session_scope
 from directory.ingest.author import author_mosque
-from directory.ingest.bespoke_store import load_bespoke
-from directory.ingest.candidate_store import save_bundle
 from directory.ingest.discover import Candidate, CandidateBundle
-from directory.ingest.extractors.bespoke import BESPOKE_EXTRACTORS
+from directory.ingest.extractors.bespoke import BESPOKE_EXTRACTORS, load_bespoke
 from directory.ingest.fetch import FetchResult
 from directory.ingest.runner import extract_source
 from directory.models import Mosque, Source
 from tests.conftest import FakeBrowsingHarness, FakeHarness
-from tests.test_author_fallback import ACME_HTML, ACME_MODULE
+from tests.ingest.test_author_fallback import ACME_HTML, ACME_MODULE
 
 BESPOKE_OUTPUT = json.dumps({
     "url": "https://e2e.example/custom",
@@ -32,11 +30,10 @@ def test_candidate_to_agentic_bespoke_to_daily_reload(engine, tmp_path):
                      website_url="https://e2e.example/"))
         s.add(Source(id="e2e", mosque_id="e2e", url="https://e2e.example/custom",
                      triage_status="candidate"))
-    save_bundle(
-        CandidateBundle("e2e", "https://e2e.example/",
-                        [Candidate("https://e2e.example/custom", 9.0, ACME_HTML, "Fajr")]),
-        root=tmp_path,
-    )
+    CandidateBundle(
+        "e2e", "https://e2e.example/",
+        [Candidate("https://e2e.example/custom", 9.0, ACME_HTML, "Fajr")],
+    ).save(tmp_path)
 
     # Single-shot fails; the agentic fallback authors a bespoke module.
     out = author_mosque(

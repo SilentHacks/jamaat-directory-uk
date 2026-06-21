@@ -2,6 +2,7 @@ from typer.testing import CliRunner
 
 from directory import cli
 from directory.ingest.author import AuthorOutcome
+from directory.ingest.harness import OpenCodeAgenticHarness
 
 runner = CliRunner()
 
@@ -49,7 +50,7 @@ def test_author_agentic_flag_passes_fallback(monkeypatch, tmp_path):
     result = runner.invoke(cli.app, ["author", "--agentic"])
     assert result.exit_code == 0
 
-    assert captured["fallback_name"] == "agentic"
+    assert isinstance(captured["fallback"], OpenCodeAgenticHarness)
     assert captured["bespoke_root"] is not None
 
 

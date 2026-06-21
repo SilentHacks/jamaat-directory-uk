@@ -1,13 +1,13 @@
 from datetime import date
-from pathlib import Path
 
 from directory import repository as repo
 from directory.db import session_scope
 from directory.ingest.fetch import FetchResult
 from directory.ingest.runner import extract_source
 from directory.models import Mosque, Source
+from tests.conftest import FIXTURES
 
-FIXTURE = Path(__file__).parent / "fixtures" / "timetable_sample.html"
+FIXTURE = FIXTURES / "timetable_sample.html"
 
 CONFIG = (
     '{"shape":"html_table","grid":{"table_selector":"table.prayer-times","date":{"index":0},'

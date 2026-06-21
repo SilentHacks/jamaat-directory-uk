@@ -1,8 +1,11 @@
+import pytest
+
 from directory.ingest.extractors.bespoke import (
     BESPOKE_EXTRACTORS,
     get_bespoke,
     load_bespoke,
     register_bespoke,
+    save_module,
 )
 from directory.ingest.extractors.engine import ExtractionResult
 
@@ -47,3 +50,18 @@ def test_load_bespoke_missing_dir_is_noop(tmp_path):
 def test_registry_is_the_module_global():
     register_bespoke("demo_global", lambda html, *, year, month: ExtractionResult())
     assert "demo_global" in BESPOKE_EXTRACTORS
+
+
+def test_save_module_writes_and_loads(tmp_path):
+    path = save_module("acme_masjid", MODULE_SRC.replace("demo_loaded", "saved_key"), root=tmp_path)
+
+    assert path == tmp_path / "acme_masjid.py"
+    loaded = load_bespoke(tmp_path)
+    assert "acme_masjid" in loaded
+    assert get_bespoke("saved_key") is not None
+
+
+@pytest.mark.parametrize("bad", ["../escape", "a/b", "a.b", "1bad", "_hidden", ""])
+def test_save_module_rejects_unsafe_keys(tmp_path, bad):
+    with pytest.raises(ValueError):
+        save_module(bad, MODULE_SRC, root=tmp_path)

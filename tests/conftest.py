@@ -1,8 +1,12 @@
+from pathlib import Path
+
 import pytest
 
 from directory.db import init_db, make_engine, session_scope
 from directory.ingest.harness import HarnessResult
 from directory.models import Mosque, Occurrence
+
+FIXTURES = Path(__file__).parent / "fixtures"
 
 
 @pytest.fixture

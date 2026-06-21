@@ -1,9 +1,7 @@
-from pathlib import Path
+from directory.ingest.seed import clean_mib_export, load_seed_file, write_seed_file
+from tests.conftest import FIXTURES
 
-from directory.ingest.mib import clean_mib_export, write_seed_file
-from directory.ingest.seed import load_seed_file
-
-FIXTURE = Path(__file__).parent / "fixtures" / "mib_sample.json"
+FIXTURE = FIXTURES / "mib_sample.json"
 
 
 def test_clean_maps_fields_to_seed_schema():

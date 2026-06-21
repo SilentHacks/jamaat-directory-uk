@@ -5,7 +5,6 @@ from datetime import date
 from directory import repository as repo
 from directory.db import session_scope
 from directory.ingest.author import author_mosque
-from directory.ingest.candidate_store import save_bundle
 from directory.ingest.discover import Candidate, CandidateBundle
 from directory.ingest.fetch import FetchResult
 from directory.models import Mosque, Occurrence, Source
@@ -60,7 +59,7 @@ def _fetcher(url, **kwargs):
 
 def test_authors_and_writes_occurrences(engine, tmp_path):
     _candidate_mosque(engine)
-    save_bundle(_bundle(), root=tmp_path)
+    _bundle().save(tmp_path)
     harness = FakeHarness(GOOD_OUTPUT)
 
     out = author_mosque(engine, "m1", harness=harness, candidate_root=tmp_path,
@@ -80,7 +79,7 @@ def test_authors_and_writes_occurrences(engine, tmp_path):
 
 def test_escalates_to_strong_when_cheap_output_is_garbage(engine, tmp_path):
     _candidate_mosque(engine)
-    save_bundle(_bundle(), root=tmp_path)
+    _bundle().save(tmp_path)
     harness = FakeHarness({"cheap": "sorry, I cannot help", "strong": GOOD_OUTPUT})
 
     out = author_mosque(engine, "m1", harness=harness, candidate_root=tmp_path,
@@ -94,7 +93,7 @@ def test_escalates_to_strong_when_cheap_output_is_garbage(engine, tmp_path):
 
 def test_all_models_fail_marks_needs_reauthor(engine, tmp_path):
     _candidate_mosque(engine)
-    save_bundle(_bundle(), root=tmp_path)
+    _bundle().save(tmp_path)
     harness = FakeHarness("not json at all")
 
     out = author_mosque(engine, "m1", harness=harness, candidate_root=tmp_path,

@@ -1,12 +1,11 @@
-from pathlib import Path
-
 import pytest
 
 from directory import repository as repo
 from directory.db import session_scope
 from directory.ingest.seed import load_seed_file, seed_database
+from tests.conftest import FIXTURES
 
-FIXTURE = Path(__file__).parent / "fixtures" / "seed_sample.json"
+FIXTURE = FIXTURES / "seed_sample.json"
 
 
 def test_load_seed_file_parses_records():

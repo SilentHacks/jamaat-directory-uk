@@ -5,7 +5,6 @@ from datetime import date
 from directory import repository as repo
 from directory.db import session_scope
 from directory.ingest.author import order_by_city_size, run_authoring
-from directory.ingest.candidate_store import save_bundle
 from directory.ingest.discover import Candidate, CandidateBundle
 from directory.ingest.fetch import FetchResult
 from directory.models import Mosque, Source
@@ -40,8 +39,8 @@ def _candidate(engine, mid, city, root):
         s.add(Mosque(id=mid, name=mid, city=city, lat=52.0, lng=-1.0,
                      website_url=f"https://{mid}.example/"))
         s.add(Source(id=mid, mosque_id=mid, url=url, triage_status="candidate"))
-    save_bundle(CandidateBundle(mid, f"https://{mid}.example/",
-                                [Candidate(url, 9.0, TABLE_HTML, "Fajr")]), root=root)
+    CandidateBundle(mid, f"https://{mid}.example/",
+                    [Candidate(url, 9.0, TABLE_HTML, "Fajr")]).save(root)
     return url
 
 

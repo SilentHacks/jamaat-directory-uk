@@ -5,7 +5,6 @@ from datetime import date
 from directory import repository as repo
 from directory.db import session_scope
 from directory.ingest.author import run_authoring
-from directory.ingest.candidate_store import save_bundle
 from directory.ingest.discover import Candidate, CandidateBundle
 from directory.ingest.fetch import FetchResult
 from directory.models import Mosque, Source
@@ -41,11 +40,10 @@ def test_candidate_authored_then_queryable(engine, tmp_path):
                      website_url="https://m.example/"))
         s.add(Source(id="m", mosque_id="m", url="https://m.example/prayer-times",
                      triage_status="candidate"))
-    save_bundle(
-        CandidateBundle("m", "https://m.example/",
-                        [Candidate("https://m.example/prayer-times", 9.0, TABLE_HTML, "Fajr")]),
-        root=tmp_path,
-    )
+    CandidateBundle(
+        "m", "https://m.example/",
+        [Candidate("https://m.example/prayer-times", 9.0, TABLE_HTML, "Fajr")],
+    ).save(tmp_path)
 
     outs = run_authoring(engine, harness=FakeHarness(OUTPUT), candidate_root=tmp_path,
                          models=("cheap", "strong"), today=date(2026, 6, 1), horizon_days=5,
