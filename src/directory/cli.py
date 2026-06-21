@@ -8,6 +8,7 @@ from directory.ingest.author import author_mosque, run_authoring
 from directory.ingest.blocklist import load_blocklist
 from directory.ingest.discover import discover_mosque, run_discovery
 from directory.ingest.extractors.bespoke import load_bespoke
+from directory.ingest.fetch import render_playwright
 from directory.ingest.harness import OpenCodeAgenticHarness, OpenCodeHarness
 from directory.ingest.runner import extract_source, run_extract
 from directory.ingest.seed import (
@@ -115,21 +116,26 @@ def discover(
     concurrency: int | None = typer.Option(  # noqa: B008
         None, "--concurrency", help="Parallel mosque discovery (default from settings)"
     ),
+    render_js: bool = typer.Option(  # noqa: B008
+        True, "--render-js/--no-render-js",
+        help="Re-render JS-shell pages with a headless browser after a static miss",
+    ),
 ) -> None:
     """Run the deterministic discovery funnel (liveness → platform → gather)."""
     settings = Settings()
     engine = make_engine(settings.database_url)
     root = settings.candidate_dir
     blocklist = load_blocklist(settings.blocklist_path)
+    renderer = render_playwright if render_js else None
     if mosque_id is not None:
         outcomes = [
             discover_mosque(engine, mosque_id, candidate_root=root,
-                            horizon_days=horizon_days, blocklist=blocklist)
+                            horizon_days=horizon_days, blocklist=blocklist, renderer=renderer)
         ]
     else:
         outcomes = run_discovery(
             engine, candidate_root=root, horizon_days=horizon_days, blocklist=blocklist,
-            concurrency=concurrency or settings.discover_concurrency,
+            concurrency=concurrency or settings.discover_concurrency, renderer=renderer,
         )
     for o in outcomes:
         typer.echo(f"{o.mosque_id}: outcome={o.outcome} platform={o.platform}")

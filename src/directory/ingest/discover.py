@@ -1,4 +1,6 @@
 import json
+import re
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from datetime import date, timedelta
@@ -16,6 +18,7 @@ from directory.ingest.extractors.platforms import base as platforms
 from directory.ingest.fetch import USER_AGENT, fetch
 from directory.ingest.gates import run_gates
 from directory.ingest.materialize import materialize
+from directory.ingest.normalize import resolve_prayer
 from directory.ingest.runner import extract_source
 
 
@@ -160,7 +163,7 @@ def gather_candidates(
             continue
         seen.add(url)
         res = fetcher(url, client=client)
-        if res.error or not res.html:
+        if not _usable(res):
             continue
         region, text = strip_to_region(res.html)
         candidates.append(Candidate(url=url, score=_score(text), region_html=region, text=text))
@@ -257,6 +260,76 @@ def _bundle_from_pages(
     return CandidateBundle(mosque_id, base_url, candidates[:max_candidates])
 
 
+def _usable(res) -> bool:
+    """A fetch result worth handing to the detector: a real body with a
+    non-error HTTP status. 4xx/5xx pages (even with a body) are dropped so a
+    soft-404 carrying sitewide chrome can never be authored from."""
+    return not res.error and bool(res.html) and res.status < 400
+
+
+# Signals that a page is a JS-hydrated shell hiding its prayer data.
+_RENDER_MIN_TIMES = 5
+_TIME_SCAN_RE = re.compile(r"\b\d{1,2}[:.]\d{2}\b")
+_URL_PRAYER_HINTS = ("prayer", "salah", "namaz", "timetable", "time-table", "times")
+_JS_MARKERS = (
+    "squarespace", "wixstatic", "wix.com", "data-reactroot", 'id="root"',
+    "masjidbox", "my-masjid.com", "mawaqit.net",
+)
+
+
+def _visible_text(soup: BeautifulSoup) -> str:
+    for tag in soup(["script", "style", "noscript", "template"]):
+        tag.decompose()
+    return soup.get_text(" ", strip=True)
+
+
+def _distinct_prayers(text: str) -> int:
+    """How many of the five daily prayers are named in ``text``."""
+    found: set = set()
+    for token in re.findall(r"[A-Za-zÀ-ɏ']+", text):
+        match = resolve_prayer(token)
+        if match.prayer is not None and not match.fuzzy:
+            found.add(match.prayer)
+    return len(found)
+
+
+def _has_empty_prayer_table(soup: BeautifulSoup) -> bool:
+    """A table whose header resolves to >=2 prayers but whose body has no data
+    rows — the classic hydration skeleton (e.g. Squarespace + Google Sheets)."""
+    for table in soup.find_all("table"):
+        rows = table.find_all("tr")
+        prayer_cols = 0
+        for cell in (rows[0].find_all(["th", "td"]) if rows else []):
+            match = resolve_prayer(cell.get_text(" ", strip=True))
+            if match.prayer is not None and not match.fuzzy:
+                prayer_cols += 1
+        data_rows = [r for r in rows if r.find_all("td")]
+        if prayer_cols >= 2 and len(data_rows) <= 1:
+            return True
+    return False
+
+
+def _page_needs_render(url: str, html: str) -> bool:
+    """True when a page looks prayer-relevant yet lacks enough static data to
+    extract — i.e. its timetable is injected by JavaScript. Tuned for recall:
+    a false positive only costs one wasted render, while a false negative would
+    silently skip a JS site (which the funnel must never do)."""
+    soup = BeautifulSoup(html, "lxml")
+    text = _visible_text(soup)
+    if len(_TIME_SCAN_RE.findall(text)) >= _RENDER_MIN_TIMES:
+        return False  # already carries a full timetable statically
+    if _has_empty_prayer_table(soup):
+        return True
+    if _distinct_prayers(text) >= 2:
+        return True
+    low = html.lower()
+    if any(marker in low for marker in _JS_MARKERS):
+        url_pray = any(hint in url.lower() for hint in _URL_PRAYER_HINTS)
+        if url_pray or _distinct_prayers(text) >= 1:
+            return True
+    return False
+
+
 def discover_mosque(
     engine,
     mosque_id: str,
@@ -267,6 +340,7 @@ def discover_mosque(
     today: date | None = None,
     horizon_days: int = 60,
     blocklist: frozenset[str] | None = None,
+    renderer: Callable[[str], str] | None = None,
 ) -> DiscoverOutcome:
     with session_scope(engine) as s:
         mosque = repo.get_mosque(s, mosque_id)
@@ -294,7 +368,7 @@ def discover_mosque(
         return DiscoverOutcome(mosque_id, "blocklisted", None)
 
     fetched = fetcher(home_url, client=client)
-    homepage_html = fetched.html or ""
+    homepage_html = fetched.html or "" if _usable(fetched) else ""
 
     # Fetch the ordered page set once: homepage, ranked sub-pages, keyword links.
     pages = _page_set(home_url, homepage_html, blocklist)
@@ -305,12 +379,33 @@ def discover_mosque(
         if url in fetched_pages:
             continue
         res = fetcher(url, client=client)
-        if res.error or not res.html:
+        if not _usable(res):
             continue
         fetched_pages[url] = res.html
 
     # Detect + verify on every fetched page; keep the best verified result.
     best = _best_verified(pages, fetched_pages, today=today, horizon_days=horizon_days)
+
+    # Static miss: re-render the JS-shell pages and verify again, so a site whose
+    # timetable is injected by JavaScript is never skipped as "static". Only the
+    # pages that actually look JS-hidden are rendered, never the whole corpus.
+    requires_js = False
+    if best is None and renderer is not None:
+        rendered_pages: dict[str, str] = {}
+        for url, html in fetched_pages.items():
+            if not _page_needs_render(url, html):
+                continue
+            res = fetcher(url, requires_js=True, renderer=renderer, client=client)
+            if _usable(res):
+                rendered_pages[url] = res.html
+        if rendered_pages:
+            rendered = _best_verified(
+                list(rendered_pages), rendered_pages, today=today, horizon_days=horizon_days
+            )
+            if rendered is not None:
+                best = rendered
+                requires_js = True
+
     if best is not None:
         match = best.match
         with session_scope(engine, write=True) as s:
@@ -322,11 +417,12 @@ def discover_mosque(
                 platform=match.platform,
                 shape=match.config.shape,
                 config=match.config.to_json(),
-                requires_js=match.requires_js,
+                requires_js=match.requires_js or requires_js,
                 triage_status="authored",
             )
         result = extract_source(
-            engine, mosque_id, fetcher=fetcher, today=today, horizon_days=horizon_days
+            engine, mosque_id, fetcher=fetcher, today=today, horizon_days=horizon_days,
+            renderer=renderer,
         )
         return DiscoverOutcome(mosque_id, result.triage_status, match.platform)
 
@@ -359,6 +455,7 @@ def run_discovery(
     horizon_days: int = 60,
     blocklist: frozenset[str] | None = None,
     concurrency: int = 16,
+    renderer: Callable[[str], str] | None = None,
 ) -> list[DiscoverOutcome]:
     with session_scope(engine) as s:
         ids = [m.id for m in repo.mosques_for_discovery(s)]
@@ -373,6 +470,7 @@ def run_discovery(
             today=today,
             horizon_days=horizon_days,
             blocklist=blocklist,
+            renderer=renderer,
         )
 
     # ids come back id-ordered; pool.map preserves order → deterministic results.
