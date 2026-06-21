@@ -5,6 +5,7 @@ from directory.domain import DAILY_PRAYERS
 from directory.ingest.extractors.config_schema import SourceConfig, WidgetSpec
 from directory.ingest.extractors.engine import Cell, ExtractionResult, register_widget
 from directory.ingest.extractors.platforms.base import PlatformMatch, register
+from directory.ingest.jsonscan import first_json_object
 from directory.ingest.normalize import parse_time
 
 # Mawaqit calendar rows are ordered [fajr, dhuhr, asr, maghrib, isha].
@@ -12,39 +13,13 @@ _ORDER = list(DAILY_PRAYERS)
 
 
 def _parse_confdata(html: str) -> dict | None:
-    # Balanced-brace, string-aware scan from the first '{' after "confData".
-    # A regex like \{.*?\} stops at the first '}', which breaks on nested JSON.
-    i = html.find("confData")
-    if i == -1:
+    obj = first_json_object(html, after="confData")
+    if obj is None:
         return None
-    start = html.find("{", i)
-    if start == -1:
+    try:
+        return json.loads(obj)
+    except json.JSONDecodeError:
         return None
-    depth = 0
-    in_str = False
-    esc = False
-    for j in range(start, len(html)):
-        c = html[j]
-        if in_str:
-            if esc:
-                esc = False
-            elif c == "\\":
-                esc = True
-            elif c == '"':
-                in_str = False
-            continue
-        if c == '"':
-            in_str = True
-        elif c == "{":
-            depth += 1
-        elif c == "}":
-            depth -= 1
-            if depth == 0:
-                try:
-                    return json.loads(html[start : j + 1])
-                except json.JSONDecodeError:
-                    return None
-    return None
 
 
 def _month_cells(month_map: dict, prayer_order, kind: str, *, year: int, month: int) -> list[Cell]:

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import httpx
 
-_UA = "jamaat-directory-uk/0.1 (+https://github.com/SilentHacks/jamaat-directory-uk)"
+USER_AGENT = "jamaat-directory-uk/0.1 (+https://github.com/SilentHacks/jamaat-directory-uk)"
 
 
 @dataclass
@@ -31,7 +31,7 @@ def fetch(
     renderer: Callable[[str], str] | None = None,
     timeout: float = 20.0,
 ) -> FetchResult:
-    headers = {"User-Agent": _UA}
+    headers = {"User-Agent": USER_AGENT}
     if etag is not None:
         headers["If-None-Match"] = etag
     if last_modified is not None:

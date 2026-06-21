@@ -115,30 +115,56 @@ def extract_html_repeated(
     return result
 
 
+def _extract_rules(
+    html: str, config: SourceConfig, *, year: int, month: int | None = None
+) -> ExtractionResult:
+    # "rules" yields no scraped cells; times are produced later by materialize_rules.
+    return ExtractionResult()
+
+
+def _extract_widget(
+    html: str, config: SourceConfig, *, year: int, month: int | None = None
+) -> ExtractionResult:
+    platform = config.widget.platform
+    fn = WIDGET_EXTRACTORS.get(platform)
+    if fn is None:
+        raise ValueError(f"no widget extractor for platform: {platform!r}")
+    return fn(html, year=year, month=month)
+
+
+def _extract_bespoke(
+    html: str, config: SourceConfig, *, year: int, month: int | None = None
+) -> ExtractionResult:
+    # Local import: bespoke modules are authored against this module's Cell /
+    # ExtractionResult, so the package imports engine — a top-level import here
+    # would be circular.
+    from directory.ingest.extractors.bespoke import get_bespoke
+
+    key = config.bespoke.module
+    fn = get_bespoke(key)
+    if fn is None:
+        raise ValueError(f"no bespoke extractor for module: {key!r}")
+    try:
+        return fn(html, year=year, month=month)
+    except Exception as exc:
+        return ExtractionResult(warnings=[f"bespoke extractor {key!r} raised: {exc}"])
+
+
+# The single place that answers "what can the engine extract, and how is each
+# shape resolved". Widget/bespoke seams live behind their helper, not inline.
+_SHAPE_EXTRACTORS: dict[str, Callable[..., ExtractionResult]] = {
+    "html_table": extract_html_table,
+    "html_repeated": extract_html_repeated,
+    "rules": _extract_rules,
+    "widget": _extract_widget,
+    "bespoke": _extract_bespoke,
+}
+
+
 def extract(
     html: str, config: SourceConfig, *, year: int, month: int | None = None
 ) -> ExtractionResult:
-    if config.shape == "html_table":
-        return extract_html_table(html, config, year=year, month=month)
-    if config.shape == "html_repeated":
-        return extract_html_repeated(html, config, year=year, month=month)
-    if config.shape == "rules":
-        return ExtractionResult()
-    if config.shape == "widget":
-        platform = config.widget.platform
-        fn = WIDGET_EXTRACTORS.get(platform)
-        if fn is None:
-            raise ValueError(f"no widget extractor for platform: {platform!r}")
-        return fn(html, year=year, month=month)
-    if config.shape == "bespoke":
-        from directory.ingest.extractors.bespoke import get_bespoke
-
-        key = config.bespoke.module
-        fn = get_bespoke(key)
-        if fn is None:
-            raise ValueError(f"no bespoke extractor for module: {key!r}")
-        try:
-            return fn(html, year=year, month=month)
-        except Exception as exc:
-            return ExtractionResult(warnings=[f"bespoke extractor {key!r} raised: {exc}"])
-    raise ValueError(f"unsupported shape: {config.shape!r}")
+    handler = _SHAPE_EXTRACTORS.get(config.shape)
+    if handler is None:
+        raise ValueError(f"unsupported shape: {config.shape!r}")
+    return handler(html, config, year=year, month=month)
