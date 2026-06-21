@@ -44,6 +44,46 @@ def parse_time(raw: str | None, *, prefer_pm: bool | None = None) -> str | None:
     return f"{hh:02d}:{mm:02d}"
 
 
+_OFFSET_RE = re.compile(
+    r"^\s*([+\-–−])?\s*(\d{1,3})\s*(m|min|mins|minute|minutes)?\.?\s*$", re.IGNORECASE
+)
+_MINUS = {"-", "–", "−"}
+
+
+def parse_offset(raw: str | None) -> int | None:
+    """Parse a relative time offset in minutes, e.g. ``"+5"``, ``"+10 min"``,
+    ``"-5"``. Requires an explicit sign or a minutes suffix — a bare integer is
+    too ambiguous (it could be a day number or a clock part). Returns signed
+    minutes, or None when the text is not an offset."""
+    if not raw:
+        return None
+    s = _ascii_digits(str(raw)).strip().lower()
+    m = _OFFSET_RE.match(s)
+    if not m:
+        return None
+    sign, num, unit = m.group(1), m.group(2), m.group(3)
+    if not sign and not unit:
+        return None
+    minutes = int(num)
+    return -minutes if sign in _MINUS else minutes
+
+
+def source_time_values(text: str | None) -> set[str]:
+    """Every clock time mentioned in ``text``, as the set of plausible 24h values.
+    An unmarked 12h time like "6:00" contributes both readings ({"06:00","18:00"})
+    so a value-based self-match is robust to 12h/24h source formatting."""
+    out: set[str] = set()
+    if not text:
+        return out
+    for m in _TIME_RE.finditer(_ascii_digits(str(text)).lower()):
+        token = m.group(0)
+        for prefer_pm in (None, True, False):
+            t = parse_time(token, prefer_pm=prefer_pm)
+            if t is not None:
+                out.add(t)
+    return out
+
+
 _MONTH_NAMES = [
     "january", "february", "march", "april", "may", "june",
     "july", "august", "september", "october", "november", "december",
@@ -105,7 +145,7 @@ def parse_date(raw: str | None, *, year: int, month: int | None = None) -> date 
     return None
 
 
-_PUNCT_REMOVE_RE = re.compile(r"[''‘’ʼʿʾ\.()`]")
+_PUNCT_REMOVE_RE = re.compile(r"[''‘’ʼʻʽʿʾ\.()`]")
 _PUNCT_SPACE_RE = re.compile(r"[-/]")
 
 _PRAYER_SYNONYMS: dict[Prayer, set[str]] = {

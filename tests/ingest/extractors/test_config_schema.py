@@ -44,6 +44,32 @@ def test_html_table_without_grid_is_rejected():
         SourceConfig.from_json('{"shape":"html_table"}')
 
 
+def test_column_value_kind_defaults_to_none_and_stored_config_roundtrips_identically():
+    # A pre-existing stored config (itself produced by to_json) has no
+    # value_kind / base_prayer. Defaulting both to None means a re-serialize is
+    # byte-identical and the new fields never appear — no DB churn, no re-author.
+    stored = SourceConfig.from_json(
+        '{"shape":"html_table","grid":{"columns":['
+        '{"kind":"jamaah","prayer":"fajr","index":1}]}}'
+    ).to_json()
+    col = SourceConfig.from_json(stored).grid.columns[0]
+    assert col.value_kind is None  # None == "time"
+    assert col.base_prayer is None
+    assert SourceConfig.from_json(stored).to_json() == stored
+    assert "value_kind" not in stored and "base_prayer" not in stored
+
+
+def test_offset_column_with_base_prayer_parses():
+    cfg = SourceConfig.from_json(
+        '{"shape":"html_table","grid":{"columns":['
+        '{"kind":"jamaah","prayer":"isha","index":3,'
+        '"value_kind":"offset","base_prayer":"maghrib"}]}}'
+    )
+    col = cfg.grid.columns[0]
+    assert col.value_kind == "offset"
+    assert col.base_prayer == Prayer.MAGHRIB
+
+
 def test_rules_shape_requires_rules_block():
     with pytest.raises(ValueError):
         SourceConfig.from_json('{"shape":"rules"}')

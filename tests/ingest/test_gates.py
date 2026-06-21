@@ -89,6 +89,20 @@ def test_out_of_window_value_auto_rejects():
     assert res.lane == "auto_reject"
 
 
+def test_high_latitude_summer_fajr_is_in_window():
+    # Aberdeen (57°N) near the solstice: Fajr ~01:20 is real data, not implausible.
+    occ = _day("2026-06-21", ["01:20", "13:30", "18:30", "21:30", "23:00"])
+    occ += _day("2026-06-22", ["01:21", "13:30", "18:31", "21:31", "23:00"])
+    res = run_gates(GRID_CFG, ExtractionResult(), occ)
+    assert res.lane == "auto_accept"
+
+
+def test_fajr_below_window_floor_still_rejects():
+    occ = _day("2026-06-21", ["00:15", "13:30", "18:30", "21:30", "23:00"])  # 00:15 < 00:30
+    res = run_gates(GRID_CFG, ExtractionResult(), occ)
+    assert res.lane == "auto_reject"
+
+
 def test_malformed_jumuah_auto_rejects():
     occ = _day("2026-06-21", ["05:00", "13:30", "18:30", "21:30", "23:00"])
     occ += _jumuah("2026-06-26", ["13:00", "12:30"])  # sessions not ordered
@@ -103,6 +117,42 @@ def test_self_match_failure_auto_rejects():
     res = run_gates(GRID_CFG, ExtractionResult(), occ, html_text="no times here at all")
     assert res.lane == "auto_reject"
     assert any("self-match" in r for r in res.reasons)
+
+
+def test_self_match_accepts_12_hour_source_times():
+    # The source renders 12-hour times with no 24h substring present; self-match
+    # is value-based, so a materialized 18:00 still matches the page's "6:00".
+    occ = _day("2026-06-21", ["05:00", "13:30", "18:00", "21:30", "23:00"])
+    html = "Fajr 5:00 | Dhuhr 1:30 | Asr 6:00 | Maghrib 9:30 | Isha 11:00"
+    res = run_gates(GRID_CFG, ExtractionResult(), occ, html_text=html)
+    assert res.lane == "auto_accept"
+
+
+def _mark_derived(occ, prayer):
+    return [
+        OccurrenceRow(o.date, o.prayer, o.session_idx, o.jamaah_time, o.begin_time, o.label,
+                      derived=(o.prayer == prayer))
+        for o in occ
+    ]
+
+
+def test_derived_jamaah_time_is_exempt_from_self_match():
+    # Isha jamaah is computed from begin + offset, so 23:00 is absent from the
+    # source. Derived occurrences skip the verbatim self-match check.
+    occ = _day("2026-06-21", ["05:00", "13:30", "18:30", "21:30", "23:00"])
+    occ += _day("2026-06-22", ["05:01", "13:30", "18:31", "21:31", "23:00"])
+    occ = _mark_derived(occ, "isha")
+    html = "05:00 05:01 13:30 18:30 18:31 21:30 21:31"  # every non-isha time, no 23:00
+    res = run_gates(GRID_CFG, ExtractionResult(), occ, html_text=html)
+    assert res.lane == "auto_accept"
+
+
+def test_derived_time_out_of_window_still_auto_rejects():
+    # The exemption is only for self-match; plausibility still guards a bad offset.
+    occ = _day("2026-06-21", ["05:00", "13:30", "18:30", "21:30", "09:00"])  # isha 09:00
+    occ = _mark_derived(occ, "isha")
+    res = run_gates(GRID_CFG, ExtractionResult(), occ, html_text="")
+    assert res.lane == "auto_reject"
 
 
 def test_empty_occurrences_auto_rejects():

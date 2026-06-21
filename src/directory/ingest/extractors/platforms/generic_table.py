@@ -2,7 +2,7 @@ from datetime import date
 
 from bs4 import BeautifulSoup
 
-from directory.domain import DAILY_PRAYERS
+from directory.domain import DAILY_PRAYERS, Prayer
 from directory.ingest.extractors.config_schema import (
     ColumnSpec,
     DateSpec,
@@ -10,9 +10,15 @@ from directory.ingest.extractors.config_schema import (
     SourceConfig,
 )
 from directory.ingest.extractors.platforms.base import PlatformMatch
+from directory.ingest.extractors.tablegrid import (
+    combined_header,
+    grid_matrix,
+    header_depth,
+)
 from directory.ingest.normalize import (
     normalize_token,
     parse_date,
+    parse_offset,
     parse_time,
     resolve_kind,
     resolve_prayer,
@@ -32,13 +38,6 @@ def _table_selector(table) -> str | None:
     return None
 
 
-def _matrix(table) -> list[list[str]]:
-    return [
-        [c.get_text(" ", strip=True) for c in tr.find_all(["td", "th"])]
-        for tr in table.find_all("tr")
-    ]
-
-
 def _column(body: list[list[str]], idx: int) -> list[str]:
     return [row[idx] for row in body[:_SAMPLE_ROWS] if idx < len(row)]
 
@@ -55,24 +54,41 @@ def _parses_date(cell: str) -> bool:
 
 
 def _detect_columns(header: list[str], body: list[list[str]]) -> list[ColumnSpec]:
-    columns: list[ColumnSpec] = []
-    seen: set[tuple] = set()
+    # First pass: resolve each prayer column and whether its body is times or
+    # "+N" offsets. Second pass drops offset columns that have no begin column to
+    # resolve against, since they cannot be materialized.
+    raw: list[tuple[int, Prayer, str, str, bool]] = []  # (idx, prayer, kind, text, is_offset)
     for idx, text in enumerate(header):
         match = resolve_prayer(text)
         prayer = match.prayer
         if prayer is None or prayer not in DAILY_PRAYERS:
             continue
-        # Fuzzy header matches are only trusted when the column body looks like times.
-        if match.fuzzy:
-            time_frac = _fraction(_column(body, idx), lambda c: parse_time(c) is not None)
-            if time_frac < _MIN_FRACTION:
-                continue
+        cells = _column(body, idx)
+        time_frac = _fraction(cells, lambda c: parse_time(c) is not None)
+        offset_frac = _fraction(cells, lambda c: parse_offset(c) is not None)
+        # Fuzzy header matches are only trusted when the body looks like times or offsets.
+        if match.fuzzy and max(time_frac, offset_frac) < _MIN_FRACTION:
+            continue
         kind = resolve_kind(text).kind or "jamaah"
+        is_offset = kind == "jamaah" and offset_frac >= _MIN_FRACTION and offset_frac >= time_frac
+        raw.append((idx, prayer, kind, text, is_offset))
+
+    begin_prayers = {p for (_, p, k, _, _) in raw if k == "begin"}
+    columns: list[ColumnSpec] = []
+    seen: set[tuple] = set()
+    for idx, prayer, kind, text, is_offset in raw:
+        if is_offset and prayer not in begin_prayers:
+            continue  # "+N" with no begin time → unmaterializable
         key = (prayer, kind)
         if key in seen:
             continue
         seen.add(key)
-        columns.append(ColumnSpec(kind=kind, prayer=prayer, index=idx, header_seen=text))
+        columns.append(
+            ColumnSpec(
+                kind=kind, prayer=prayer, index=idx, header_seen=text,
+                value_kind="offset" if is_offset else None,
+            )
+        )
     return columns
 
 
@@ -102,10 +118,12 @@ class GenericTableDetector:
     def detect(self, html: str, url: str) -> PlatformMatch | None:
         soup = BeautifulSoup(html, "lxml")
         for table in soup.find_all("table"):
-            rows = _matrix(table)
-            if len(rows) < 2:
+            grid = grid_matrix(table)
+            depth = header_depth(table)
+            if len(grid) <= depth:
                 continue
-            header, body = rows[0], rows[1:]
+            header = combined_header(grid, depth)
+            body = grid[depth:]
             columns = _detect_columns(header, body)
             if len(columns) < _MIN_PRAYER_COLS:
                 continue

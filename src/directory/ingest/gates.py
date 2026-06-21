@@ -5,10 +5,13 @@ from directory.domain import DAILY_PRAYERS
 from directory.ingest.extractors.config_schema import SourceConfig
 from directory.ingest.extractors.engine import ExtractionResult
 from directory.ingest.materialize import OccurrenceRow
+from directory.ingest.normalize import source_time_values
 
 # Plausible jamaah windows in minutes-from-midnight, inclusive.
 _WINDOWS: dict[str, tuple[int, int]] = {
-    "fajr": (2 * 60, 7 * 60 + 30),
+    # Floor 00:30: high-latitude UK summer Fajr (e.g. Aberdeen, 57°N) is genuinely
+    # ~01:00–01:30 near the solstice. The monotonic check still guards ordering.
+    "fajr": (30, 7 * 60 + 30),
     "dhuhr": (11 * 60 + 30, 15 * 60),
     "asr": (13 * 60, 19 * 60 + 30),
     "maghrib": (15 * 60 + 30, 22 * 60 + 30),
@@ -111,10 +114,17 @@ def run_gates(
     if plaus is not None:
         return GateResult("auto_reject", 0.0, [plaus])
 
-    # Self-extraction match: every distinct jamaah time must appear in the source.
+    # Self-extraction match: every scraped jamaah time must appear in the source.
+    # Compared by value (not substring) so a 12h-format page's "6:00" matches a
+    # materialized 18:00. Derived times (begin + offset) are computed, not present
+    # verbatim, so they are exempt; their plausibility is still enforced by the
+    # window/monotonic checks above and the begin they derive from is in the source.
     if html_text:
+        present = source_time_values(html_text)
         for o in occurrences:
-            if o.jamaah_time not in html_text:
+            if o.derived:
+                continue
+            if o.jamaah_time not in present:
                 return GateResult("auto_reject", 0.0, [f"self-match failed for {o.jamaah_time}"])
 
     # Jumu'ah plausibility (malformed sessions are always rejected).

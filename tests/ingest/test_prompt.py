@@ -33,6 +33,13 @@ def test_prompt_lists_the_required_output_shape_and_vocab():
         assert name in p
 
 
+def test_prompt_documents_relative_offset_columns():
+    p = build_author_prompt(_bundle())
+    assert "value_kind" in p
+    assert "offset" in p
+    assert "base_prayer" in p
+
+
 def test_prompt_truncates_regions_and_caps_candidate_count():
     big = Candidate(url="https://m1.example/big", score=5.0, region_html="x" * 9000, text="t")
     bundle = CandidateBundle("m1", "https://m1.example/", [big, big, big, big])

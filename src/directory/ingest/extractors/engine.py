@@ -6,7 +6,8 @@ from bs4 import BeautifulSoup
 
 from directory.domain import Prayer
 from directory.ingest.extractors.config_schema import SourceConfig
-from directory.ingest.normalize import parse_date, parse_time
+from directory.ingest.extractors.tablegrid import grid_matrix
+from directory.ingest.normalize import parse_date, parse_offset, parse_time
 
 
 @dataclass
@@ -14,8 +15,10 @@ class Cell:
     date: date
     prayer: Prayer
     kind: str  # "jamaah" | "begin"
-    time: str  # "HH:MM"
+    time: str | None  # "HH:MM"; None when the cell is a relative offset
     header_seen: str | None = None
+    offset_min: int | None = None  # set when the cell is "+N" minutes
+    base_prayer: Prayer | None = None  # begin time the offset resolves against
 
 
 @dataclass
@@ -48,10 +51,9 @@ def extract_html_table(
     if table is None:
         return ExtractionResult(warnings=["table not found"])
 
-    matrix = [
-        [td.get_text(" ", strip=True) for td in tr.find_all(["td", "th"])]
-        for tr in table.find_all("tr")
-    ]
+    # Shared grid model so body indices match the detector's column indices even
+    # when a row uses colspan/rowspan.
+    matrix = grid_matrix(table)
     if grid.transpose:
         matrix = [list(row) for row in zip(*matrix, strict=False)]
 
@@ -69,7 +71,20 @@ def extract_html_table(
                 continue
             if col.prayer is None:
                 continue
-            t = parse_time(texts[col.index], prefer_pm=_prefer_pm(col.prayer))
+            raw = texts[col.index]
+            if col.value_kind == "offset":
+                off = parse_offset(raw)
+                if off is None:
+                    continue
+                result.cells.append(
+                    Cell(
+                        date=d, prayer=col.prayer, kind=col.kind, time=None,
+                        header_seen=col.header_seen, offset_min=off,
+                        base_prayer=col.base_prayer or col.prayer,
+                    )
+                )
+                continue
+            t = parse_time(raw, prefer_pm=_prefer_pm(col.prayer))
             if t is None:
                 continue
             result.cells.append(
