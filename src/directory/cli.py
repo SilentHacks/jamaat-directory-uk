@@ -4,7 +4,9 @@ import typer
 
 from directory.config import Settings
 from directory.db import init_db, make_engine
+from directory.ingest.author import author_mosque, run_authoring
 from directory.ingest.discover import discover_mosque, run_discovery
+from directory.ingest.harness import get_harness
 from directory.ingest.mib import clean_mib_export, write_seed_file
 from directory.ingest.runner import extract_source, run_extract
 from directory.ingest.seed import load_seed_file, seed_database
@@ -103,6 +105,35 @@ def discover(
     for o in outcomes:
         typer.echo(f"{o.mosque_id}: outcome={o.outcome} platform={o.platform}")
     typer.echo(f"Discovered {len(outcomes)} mosque(s)")
+
+
+@app.command()
+def author(
+    mosque_id: str | None = typer.Option(None, "--mosque-id", help="Author one mosque"),  # noqa: B008
+    max_calls: int | None = typer.Option(None, "--max-calls", help="Per-run harness call budget"),  # noqa: B008
+    horizon_days: int = typer.Option(60, "--horizon-days", help="Verification horizon"),  # noqa: B008
+) -> None:
+    """Single-shot authoring of candidate sources via the agent harness."""
+    settings = Settings()
+    engine = make_engine(settings.database_url)
+    harness = get_harness(settings.author_harness)
+    models = (settings.author_model_cheap, settings.author_model_strong)
+    root = settings.candidate_dir
+    if mosque_id is not None:
+        outcomes = [
+            author_mosque(
+                engine, mosque_id, harness=harness, candidate_root=root,
+                models=models, horizon_days=horizon_days,
+            )
+        ]
+    else:
+        outcomes = run_authoring(
+            engine, harness=harness, candidate_root=root, models=models,
+            max_calls=max_calls or settings.author_max_calls, horizon_days=horizon_days,
+        )
+    for o in outcomes:
+        typer.echo(f"{o.mosque_id}: outcome={o.outcome} model={o.model}")
+    typer.echo(f"Authored {len(outcomes)} mosque(s)")
 
 
 if __name__ == "__main__":
