@@ -201,6 +201,12 @@ def run_authoring(
     *,
     harness: AuthorHarness | None = None,
     harness_name: str = "opencode",
+    fallback: AuthorHarness | None = None,
+    fallback_name: str | None = None,
+    fallback_model: str = "agentic",
+    bespoke_root: Path | None = None,
+    page_budget: int = 8,
+    token_budget: int = 200_000,
     candidate_root: Path,
     models: tuple[str, ...],
     max_calls: int = 50,
@@ -211,6 +217,8 @@ def run_authoring(
     renderer=None,
 ) -> list[AuthorOutcome]:
     harness = harness or get_harness(harness_name)
+    if fallback is None and fallback_name:
+        fallback = get_harness(fallback_name, page_budget=page_budget, token_budget=token_budget)
     with session_scope(engine) as s:
         candidates = repo.candidate_sources(s)
         mosques = [repo.get_mosque(s, c.mosque_id) for c in candidates]
@@ -224,6 +232,7 @@ def run_authoring(
             break
         out = author_mosque(
             engine, mid, harness=harness, candidate_root=candidate_root, models=models,
+            fallback=fallback, fallback_model=fallback_model, bespoke_root=bespoke_root,
             today=today, horizon_days=horizon_days, fetcher=fetcher, renderer=renderer,
         )
         outcomes.append(out)
