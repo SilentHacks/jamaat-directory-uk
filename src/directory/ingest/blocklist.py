@@ -36,6 +36,9 @@ _DEFAULT_BLOCKLIST: frozenset[str] = frozenset(
         # events / booking
         "eventbrite.com",
         "eventbrite.co.uk",
+        # archives / aggregators
+        "web.archive.org",
+        "mosques.muslimsinbritain.org",
     }
 )
 
