@@ -4,10 +4,12 @@ from sqlalchemy import Engine, select
 from directory.api.deps import get_engine
 from directory.config import get_settings
 from directory.db import session_scope
+from directory.ingest.author import author_mosque
 from directory.ingest.discover import discover_mosque
+from directory.ingest.harness import get_harness
 from directory.ingest.runner import extract_source
 from directory.models import Source
-from directory.repository import get_mosque, get_source, iter_all_mosques
+from directory.repository import get_mosque, get_source, iter_all_mosques, sources_in_review
 
 router = APIRouter(tags=["ops"])
 
@@ -58,6 +60,41 @@ def discover_mosque_endpoint(mosque_id: str, engine: Engine = Depends(get_engine
         "platform": out.platform,
         "detail": out.detail,
     }
+
+
+@router.post(
+    "/admin/mosques/{mosque_id}/author", dependencies=[Depends(require_admin)]
+)  # noqa: B008
+def author_mosque_endpoint(mosque_id: str, engine: Engine = Depends(get_engine)):  # noqa: B008
+    settings = get_settings()
+    with session_scope(engine) as s:
+        if get_mosque(s, mosque_id) is None:
+            raise HTTPException(404, "mosque not found")
+    out = author_mosque(
+        engine, mosque_id,
+        harness=get_harness(settings.author_harness),
+        candidate_root=settings.candidate_dir,
+        models=(settings.author_model_cheap, settings.author_model_strong),
+    )
+    return {
+        "mosque_id": out.mosque_id, "outcome": out.outcome,
+        "model": out.model, "detail": out.detail,
+    }
+
+
+@router.get("/admin/review", dependencies=[Depends(require_admin)])  # noqa: B008
+def review_queue(engine: Engine = Depends(get_engine)):  # noqa: B008
+    with session_scope(engine) as s:
+        rows = sources_in_review(s)
+        out = []
+        for r in rows:
+            m = get_mosque(s, r.mosque_id)
+            out.append({
+                "source_id": r.id, "mosque_id": r.mosque_id,
+                "name": m.name if m else None, "url": r.url,
+                "reason": r.review_reason, "confidence": r.confidence,
+            })
+        return out
 
 
 @router.get("/admin/sources", dependencies=[Depends(require_admin)])  # noqa: B008
