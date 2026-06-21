@@ -10,6 +10,11 @@ from directory.ingest.extractors.config_schema import (
     SourceConfig,
 )
 from directory.ingest.extractors.platforms.base import PlatformMatch
+from directory.ingest.extractors.tablegrid import (
+    combined_header,
+    grid_matrix,
+    header_depth,
+)
 from directory.ingest.normalize import (
     normalize_token,
     parse_date,
@@ -30,13 +35,6 @@ def _table_selector(table) -> str | None:
     if classes:
         return "table." + classes[0]
     return None
-
-
-def _matrix(table) -> list[list[str]]:
-    return [
-        [c.get_text(" ", strip=True) for c in tr.find_all(["td", "th"])]
-        for tr in table.find_all("tr")
-    ]
 
 
 def _column(body: list[list[str]], idx: int) -> list[str]:
@@ -102,10 +100,12 @@ class GenericTableDetector:
     def detect(self, html: str, url: str) -> PlatformMatch | None:
         soup = BeautifulSoup(html, "lxml")
         for table in soup.find_all("table"):
-            rows = _matrix(table)
-            if len(rows) < 2:
+            grid = grid_matrix(table)
+            depth = header_depth(table)
+            if len(grid) <= depth:
                 continue
-            header, body = rows[0], rows[1:]
+            header = combined_header(grid, depth)
+            body = grid[depth:]
             columns = _detect_columns(header, body)
             if len(columns) < _MIN_PRAYER_COLS:
                 continue
