@@ -1,7 +1,8 @@
 import json
+from datetime import date, timedelta
 from importlib import resources
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Form, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import Engine
@@ -10,6 +11,11 @@ from directory import repository as repo
 from directory.api.deps import get_engine
 from directory.config import get_settings
 from directory.db import session_scope
+from directory.ingest.extractors.config_schema import SourceConfig
+from directory.ingest.extractors.engine import extract
+from directory.ingest.fetch import fetch
+from directory.ingest.materialize import materialize
+from directory.ingest.review import approve_source, fix_mapping, reject_source
 
 _templates_dir = resources.files("directory.web").joinpath("templates")
 templates = Jinja2Templates(directory=str(_templates_dir))
@@ -105,3 +111,70 @@ def review_detail(
             {"source": src, "name": m.name if m else None,
              "config_pretty": _config_pretty(src.config), "key": key or ""},
         )
+
+
+@router.get(
+    "/admin/review/{source_id}/preview", response_class=HTMLResponse,
+    dependencies=[Depends(require_web_admin)],
+)  # noqa: B008
+def review_preview(
+    request: Request, source_id: str, key: str | None = None,
+    engine: Engine = Depends(get_engine),  # noqa: B008
+):
+    with session_scope(engine) as s:
+        src = repo.get_source(s, source_id)
+        if src is None:
+            raise HTTPException(404, "source not found")
+        url, config_raw, requires_js = src.url, src.config, bool(src.requires_js)
+    rows = []
+    fetched = fetch(url, requires_js=requires_js) if url else None
+    if fetched and fetched.html and config_raw:
+        config = SourceConfig.from_json(config_raw)
+        today = date.today()
+        result = extract(fetched.html, config, year=today.year, month=today.month)
+        horizon_end = today + timedelta(days=7)
+        rows = materialize(result, config, horizon_start=today, horizon_end=horizon_end)
+    return templates.TemplateResponse(request, "_review_preview.html", {"rows": rows})
+
+
+@router.post(
+    "/admin/review/{source_id}/approve", response_class=HTMLResponse,
+    dependencies=[Depends(require_web_admin)],
+)  # noqa: B008
+def review_approve(
+    request: Request, source_id: str, key: str | None = None,
+    engine: Engine = Depends(get_engine),  # noqa: B008
+):
+    out = approve_source(engine, source_id, fetcher=fetch)
+    msg = f"{out.triage_status} ({out.rows_written} rows)"
+    return templates.TemplateResponse(request, "_review_outcome.html", {"message": msg})
+
+
+@router.post(
+    "/admin/review/{source_id}/reject", response_class=HTMLResponse,
+    dependencies=[Depends(require_web_admin)],
+)  # noqa: B008
+def review_reject(
+    request: Request, source_id: str, key: str | None = None,
+    engine: Engine = Depends(get_engine),  # noqa: B008
+):
+    reject_source(engine, source_id)
+    return templates.TemplateResponse(request, "_review_outcome.html", {"message": "excluded"})
+
+
+@router.post(
+    "/admin/review/{source_id}/fix", response_class=HTMLResponse,
+    dependencies=[Depends(require_web_admin)],
+)  # noqa: B008
+def review_fix(
+    request: Request, source_id: str, config_json: str = Form(...),  # noqa: B008
+    key: str | None = None, engine: Engine = Depends(get_engine),  # noqa: B008
+):
+    try:
+        out = fix_mapping(engine, source_id, config_json, fetcher=fetch)
+    except ValueError as exc:
+        return templates.TemplateResponse(
+            request, "_review_outcome.html", {"message": f"config error: {exc}"}
+        )
+    msg = f"{out.triage_status} ({out.rows_written} rows)"
+    return templates.TemplateResponse(request, "_review_outcome.html", {"message": msg})

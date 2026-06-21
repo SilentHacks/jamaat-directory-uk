@@ -1,0 +1,11 @@
+<table>
+  <thead><tr><th>Date</th><th>Prayer</th><th>Session</th><th>Jamaah</th><th>Begin</th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+    <tr><td>{{ r.date }}</td><td>{{ r.prayer }}</td><td>{{ r.session_idx }}</td>
+        <td>{{ r.jamaah_time }}</td><td>{{ r.begin_time or "" }}</td></tr>
+  {% else %}
+    <tr><td colspan="5" class="muted">No rows extracted.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
