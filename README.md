@@ -56,6 +56,31 @@ are authored and immediately verified through the extraction gates. Everything
 else has its timetable candidates gathered and cached under `data/candidates/`
 for the Phase-4 AI authoring step.
 
+### Authoring (single-shot, agent harness)
+
+For mosques the deterministic funnel left as `candidate`, hand the cached
+candidate bundle to an agent harness to author a `SourceConfig`. The harness is
+pluggable (default: the OpenCode CLI; others register via `register_harness`).
+Every authored config is verified through the same extraction gates before it
+activates — the harness only fills configs the engine already runs.
+
+```bash
+directory author                    # author the candidate backlog (cheap→strong)
+directory author --mosque-id m1     # one mosque
+directory author --max-calls 20     # cap harness calls this run (resumable)
+```
+
+Configure via env: `DIRECTORY_AUTHOR_HARNESS`, `DIRECTORY_AUTHOR_MODEL_CHEAP`,
+`DIRECTORY_AUTHOR_MODEL_STRONG`, `DIRECTORY_AUTHOR_MAX_CALLS`.
+
+### Review queue
+
+Ambiguous configs land in `triage_status='review'`. The HTMX admin queue
+(`GET /admin/review?key=<ADMIN_API_KEY>`) shows each item's source link,
+extracted preview, config mapping, and flag reason, with approve / reject /
+fix-mapping actions. The key is accepted via the `X-API-Key` header or a `?key=`
+query param; run it behind Caddy/Cloudflare in production.
+
 Interactive API docs at `/docs`. Browse site at `/`.
 
 ## API
