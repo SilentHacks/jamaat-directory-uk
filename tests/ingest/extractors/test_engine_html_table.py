@@ -45,3 +45,38 @@ def test_missing_table_yields_warning_not_crash():
     result = extract_html_table("<p>no table</p>", CONFIG, year=2026)
     assert result.cells == []
     assert result.warnings
+
+
+# A body row with a colspan: Dhuhr+Asr share one merged 13:15 cell. Naive
+# cell-flattening would shift Maghrib out of index 4; the grid model keeps it.
+COLSPAN_BODY = """
+<table class="t">
+  <tr><th>Date</th><th>Fajr</th><th>Dhuhr</th><th>Asr</th><th>Maghrib</th></tr>
+  <tr><td>3 June</td><td>05:00</td><td colspan="2">13:15</td><td>21:10</td></tr>
+</table>
+"""
+
+COLSPAN_CFG = SourceConfig.from_json(
+    """
+    {
+      "shape": "html_table",
+      "grid": {
+        "table_selector": "table.t",
+        "date": {"index": 0},
+        "columns": [
+          {"kind": "jamaah", "prayer": "fajr", "index": 1},
+          {"kind": "jamaah", "prayer": "dhuhr", "index": 2},
+          {"kind": "jamaah", "prayer": "asr", "index": 3},
+          {"kind": "jamaah", "prayer": "maghrib", "index": 4}
+        ]
+      }
+    }
+    """
+)
+
+
+def test_body_colspan_keeps_column_indices_aligned():
+    result = extract_html_table(COLSPAN_BODY, COLSPAN_CFG, year=2026, month=6)
+    by = {c.prayer: c.time for c in result.cells if c.date == date(2026, 6, 3)}
+    assert by[Prayer.MAGHRIB] == "21:10"  # colspan did not shift Maghrib out of index 4
+    assert by[Prayer.ASR] == "13:15"  # Asr inherits the spanned 13:15 cell

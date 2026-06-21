@@ -6,6 +6,7 @@ from bs4 import BeautifulSoup
 
 from directory.domain import Prayer
 from directory.ingest.extractors.config_schema import SourceConfig
+from directory.ingest.extractors.tablegrid import grid_matrix
 from directory.ingest.normalize import parse_date, parse_time
 
 
@@ -48,10 +49,9 @@ def extract_html_table(
     if table is None:
         return ExtractionResult(warnings=["table not found"])
 
-    matrix = [
-        [td.get_text(" ", strip=True) for td in tr.find_all(["td", "th"])]
-        for tr in table.find_all("tr")
-    ]
+    # Shared grid model so body indices match the detector's column indices even
+    # when a row uses colspan/rowspan.
+    matrix = grid_matrix(table)
     if grid.transpose:
         matrix = [list(row) for row in zip(*matrix, strict=False)]
 
