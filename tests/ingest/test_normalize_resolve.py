@@ -49,3 +49,12 @@ def test_kind_resolution():
     assert resolve_kind("Begins").kind == "begin"
     assert resolve_kind("Adhan").kind == "begin"
     assert resolve_kind("weather").kind is None
+
+
+def test_jamaah_resolves_exactly_across_okina_variants():
+    # Every transliteration okina/ayn used for "Jamā‘ah" must resolve exactly,
+    # not fall back via fuzzy matching (which the detector does not trust).
+    for raw in ["Jamā‘ah", "Jamā’ah", "Jamāʿah", "Jamāʻah", "Jamā'ah", "Jamā`ah"]:
+        m = resolve_kind(raw)
+        assert m.kind == "jamaah", raw
+        assert m.fuzzy is False, raw
