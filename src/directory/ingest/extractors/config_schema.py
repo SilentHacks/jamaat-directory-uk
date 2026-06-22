@@ -5,7 +5,8 @@ from pydantic import BaseModel, Field, model_validator
 from directory.domain import Prayer
 
 Shape = Literal[
-    "html_table", "html_repeated", "rules", "widget", "image", "pdf", "bespoke"
+    "html_table", "html_repeated", "dom_records", "rules", "widget", "image", "pdf",
+    "bespoke",
 ]
 
 
@@ -28,6 +29,11 @@ class DateSpec(BaseModel):
 class GridSpec(BaseModel):
     table_selector: str | None = None  # html_table: CSS for the <table>
     row_selector: str | None = None  # html_repeated: CSS for each day item
+    # Div-grid source: the layout is a <table>-shaped grid built from <div>s
+    # (ARIA role="table"/"row"/"cell" or repeated sibling-row containers), not a
+    # real <table>. The engine rebuilds the matrix via dom_matrix() each run, so
+    # no brittle per-element selector is stored. None/absent → a real <table>.
+    dom_grid: bool | None = None
     transpose: bool = False
     # Prayer-rows orientation: a label column names the prayer on each body row,
     # while the header names the kind (Begin/Iqamah). None → prayers are in the
@@ -124,7 +130,7 @@ class SourceConfig(BaseModel):
 
     @model_validator(mode="after")
     def _check_shape(self) -> "SourceConfig":
-        if self.shape in {"html_table", "html_repeated"} and self.grid is None:
+        if self.shape in {"html_table", "html_repeated", "dom_records"} and self.grid is None:
             raise ValueError(f"shape {self.shape!r} requires a grid spec")
         if self.shape == "rules" and self.rules is None:
             raise ValueError("shape 'rules' requires a rules spec")

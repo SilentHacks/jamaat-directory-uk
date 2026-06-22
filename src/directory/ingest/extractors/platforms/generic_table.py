@@ -248,11 +248,12 @@ class GenericTableDetector:
             body = grid[depth:]
             # Richest layout first: multi-day (more horizon coverage) beats a
             # single-day snapshot; a recognised orientation beats none.
+            selector = _table_selector(table)
             config = (
-                _horizontal_multiday(table, header, body)
-                or _transpose_multiday(table, grid)
-                or _horizontal_single_day(table, header, body)
-                or _vertical_single_day(table, header, body)
+                _horizontal_multiday(selector, header, body)
+                or _transpose_multiday(selector, grid)
+                or _horizontal_single_day(selector, header, body)
+                or _vertical_single_day(selector, header, body)
             )
             if config is not None:
                 return PlatformMatch(
@@ -261,7 +262,7 @@ class GenericTableDetector:
         return None
 
 
-def _horizontal_multiday(table, header, body) -> SourceConfig | None:
+def _horizontal_multiday(selector, header, body) -> SourceConfig | None:
     """The classic layout: prayers across the header, one date per body row."""
     columns = _detect_columns(header, body)
     if len(columns) < _MIN_PRAYER_COLS:
@@ -272,7 +273,7 @@ def _horizontal_multiday(table, header, body) -> SourceConfig | None:
     return SourceConfig(
         shape="html_table",
         grid=GridSpec(
-            table_selector=_table_selector(table),
+            table_selector=selector,
             transpose=False,
             date=DateSpec(index=date_idx),
             columns=columns,
@@ -280,7 +281,7 @@ def _horizontal_multiday(table, header, body) -> SourceConfig | None:
     )
 
 
-def _transpose_multiday(table, grid) -> SourceConfig | None:
+def _transpose_multiday(selector, grid) -> SourceConfig | None:
     """Prayers down the side, dates across the top: flip the grid and reuse the
     column/date detectors. The engine applies the same flip via transpose=True."""
     if len(grid) < 2:
@@ -298,7 +299,7 @@ def _transpose_multiday(table, grid) -> SourceConfig | None:
     return SourceConfig(
         shape="html_table",
         grid=GridSpec(
-            table_selector=_table_selector(table),
+            table_selector=selector,
             transpose=True,
             date=DateSpec(index=date_idx),
             columns=columns,
@@ -306,7 +307,7 @@ def _transpose_multiday(table, grid) -> SourceConfig | None:
     )
 
 
-def _horizontal_single_day(table, header, body) -> SourceConfig | None:
+def _horizontal_single_day(selector, header, body) -> SourceConfig | None:
     """Prayers across the header but no date axis — a single 'today' row."""
     columns = _detect_columns(header, body)
     if len(columns) < _MIN_PRAYER_COLS:
@@ -322,14 +323,14 @@ def _horizontal_single_day(table, header, body) -> SourceConfig | None:
     return SourceConfig(
         shape="html_table",
         grid=GridSpec(
-            table_selector=_table_selector(table),
+            table_selector=selector,
             single_day=True,
             columns=columns,
         ),
     )
 
 
-def _vertical_single_day(table, header, body) -> SourceConfig | None:
+def _vertical_single_day(selector, header, body) -> SourceConfig | None:
     """Prayers down a label column, kinds across the header, no date axis."""
     found = _detect_vertical(header, body)
     if found is None:
@@ -338,7 +339,7 @@ def _vertical_single_day(table, header, body) -> SourceConfig | None:
     return SourceConfig(
         shape="html_table",
         grid=GridSpec(
-            table_selector=_table_selector(table),
+            table_selector=selector,
             prayer_label_index=label_idx,
             single_day=True,
             columns=columns,

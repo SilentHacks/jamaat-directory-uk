@@ -1,0 +1,29 @@
+<!doctype html>
+<!-- A div-based "table" with no ARIA roles: a container of repeated sibling row
+     <div>s, each holding the same number of cell <div>s (header row first). The
+     dom_grid adapter must induce the grid from the repeated-sibling geometry. -->
+<html>
+  <body>
+    <section>
+      <h2>Prayer Timetable</h2>
+      <div class="grid">
+        <div class="gr">
+          <div class="gc">Date</div><div class="gc">Fajr</div><div class="gc">Dhuhr</div>
+          <div class="gc">Asr</div><div class="gc">Maghrib</div><div class="gc">Isha</div>
+        </div>
+        <div class="gr">
+          <div class="gc">1 Jun</div><div class="gc">03:15</div><div class="gc">13:30</div>
+          <div class="gc">18:45</div><div class="gc">21:30</div><div class="gc">23:00</div>
+        </div>
+        <div class="gr">
+          <div class="gc">2 Jun</div><div class="gc">03:16</div><div class="gc">13:30</div>
+          <div class="gc">18:46</div><div class="gc">21:31</div><div class="gc">23:01</div>
+        </div>
+        <div class="gr">
+          <div class="gc">3 Jun</div><div class="gc">03:17</div><div class="gc">13:30</div>
+          <div class="gc">18:47</div><div class="gc">21:32</div><div class="gc">23:02</div>
+        </div>
+      </div>
+    </section>
+  </body>
+</html>

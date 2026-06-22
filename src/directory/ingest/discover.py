@@ -206,6 +206,9 @@ class _Verified:
 
 
 _LANE_RANK = {"auto_accept": 2, "review": 1}
+# Layout-agnostic catch-alls: a real platform / <table> match should outrank
+# these, so they all count as non-specific when comparing pages.
+_GENERIC_PLATFORMS = frozenset({"generic_table", "dom_grid", "dom_records"})
 
 
 def _verify(html: str, match, *, today: date | None, horizon_days: int):
@@ -240,7 +243,7 @@ def _best_verified(
         if verified is None:
             continue
         gate, completeness = verified
-        is_specific = 0 if match.platform == "generic_table" else 1
+        is_specific = 0 if match.platform in _GENERIC_PLATFORMS else 1
         rank = (_LANE_RANK[gate.lane], is_specific, completeness, -idx)
         if best is None or rank > best.rank:
             best = _Verified(match=match, rank=rank)
@@ -341,6 +344,7 @@ def discover_mosque(
     horizon_days: int = 60,
     blocklist: frozenset[str] | None = None,
     renderer: Callable[[str], str] | None = None,
+    nav_renderer=None,
 ) -> DiscoverOutcome:
     with session_scope(engine) as s:
         mosque = repo.get_mosque(s, mosque_id)
@@ -422,7 +426,7 @@ def discover_mosque(
             )
         result = extract_source(
             engine, mosque_id, fetcher=fetcher, today=today, horizon_days=horizon_days,
-            renderer=renderer,
+            renderer=renderer, nav_renderer=nav_renderer,
         )
         return DiscoverOutcome(mosque_id, result.triage_status, match.platform)
 
@@ -456,6 +460,7 @@ def run_discovery(
     blocklist: frozenset[str] | None = None,
     concurrency: int = 16,
     renderer: Callable[[str], str] | None = None,
+    nav_renderer=None,
 ) -> list[DiscoverOutcome]:
     with session_scope(engine) as s:
         ids = [m.id for m in repo.mosques_for_discovery(s)]
@@ -471,6 +476,7 @@ def run_discovery(
             horizon_days=horizon_days,
             blocklist=blocklist,
             renderer=renderer,
+            nav_renderer=nav_renderer,
         )
 
     # ids come back id-ordered; pool.map preserves order → deterministic results.
