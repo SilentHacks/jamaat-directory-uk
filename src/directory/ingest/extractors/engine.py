@@ -258,6 +258,17 @@ def _extract_widget(
     return fn(html, year=year, month=month)
 
 
+def _extract_dom_records(
+    html: str, config: SourceConfig, *, year: int, month: int | None = None,
+    today: date | None = None,
+) -> ExtractionResult:
+    # Local import: dom_records imports Cell/ExtractionResult from this module, so
+    # a top-level import here would be circular (mirrors the bespoke seam below).
+    from directory.ingest.extractors.dom_records import extract_dom_records
+
+    return extract_dom_records(html, config, year=year, month=month, today=today)
+
+
 def _extract_bespoke(
     html: str, config: SourceConfig, *, year: int, month: int | None = None,
     today: date | None = None,
@@ -282,6 +293,7 @@ def _extract_bespoke(
 _SHAPE_EXTRACTORS: dict[str, Callable[..., ExtractionResult]] = {
     "html_table": extract_html_table,
     "html_repeated": extract_html_repeated,
+    "dom_records": _extract_dom_records,
     "rules": _extract_rules,
     "widget": _extract_widget,
     "bespoke": _extract_bespoke,
