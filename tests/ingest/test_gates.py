@@ -106,6 +106,21 @@ def test_high_latitude_summer_fajr_is_in_window():
     assert res.lane == "auto_accept"
 
 
+def test_high_summer_late_asr_is_in_window():
+    # London late June (Hanafi Asr): Asr jamaah ~20:00 is real data — it begins
+    # late afternoon and the congregation is well after. Still before Maghrib.
+    occ = _day("2026-06-21", ["01:20", "13:30", "20:00", "21:25", "23:00"])
+    occ += _day("2026-06-22", ["01:21", "13:30", "20:00", "21:27", "23:00"])
+    res = run_gates(GRID_CFG, ExtractionResult(), occ)
+    assert res.lane == "auto_accept"
+
+
+def test_asr_above_window_ceiling_still_rejects():
+    occ = _day("2026-06-21", ["01:20", "13:30", "21:00", "21:25", "23:00"])  # 21:00 > 20:30
+    res = run_gates(GRID_CFG, ExtractionResult(), occ)
+    assert res.lane == "auto_reject"
+
+
 def test_fajr_below_window_floor_still_rejects():
     occ = _day("2026-06-21", ["00:15", "13:30", "18:30", "21:30", "23:00"])  # 00:15 < 00:30
     res = run_gates(GRID_CFG, ExtractionResult(), occ)
@@ -219,6 +234,26 @@ def test_lint_rejects_paging_on_prayer_rows():
         '"paging":{"mode":"render_nav","nav":{"kind":"next","next_selector":".n"}}}'
     )
     assert any("multi-day" in p for p in lint_config(cfg))
+
+
+def test_lint_rejects_paging_on_month_sections():
+    # A month_sections page already carries every month, so paging is contradictory.
+    cfg = SourceConfig.from_json(
+        '{"shape":"html_table","grid":{"month_sections":true,'
+        '"date":{"index":0,"format":"day_only"},'
+        '"columns":[{"kind":"jamaah","prayer":"fajr","index":1}]},'
+        '"paging":{"mode":"url_template","url_template":"https://x.org/{year}/{month}"}}'
+    )
+    assert any("month_sections" in p for p in lint_config(cfg))
+
+
+def test_lint_accepts_month_sections_without_paging():
+    cfg = SourceConfig.from_json(
+        '{"shape":"html_table","grid":{"month_sections":true,'
+        '"date":{"index":0,"format":"day_only"},'
+        '"columns":[{"kind":"jamaah","prayer":"fajr","index":1}]}}'
+    )
+    assert lint_config(cfg) == []
 
 
 def test_lint_rejects_paging_on_rules_shape():

@@ -100,6 +100,23 @@ _MONTH_DAY_RE = re.compile(r"\b([a-z]{3,})\s+(\d{1,2})(?:st|nd|rd|th)?\b")
 _DAY_ONLY_RE = re.compile(r"^\s*(\d{1,2})(?:st|nd|rd|th)?\s*$")
 
 
+_MONTH_LABEL_RE = re.compile(r"^([a-z]{3,})(?:\s+\d{4})?$")
+
+
+def month_from_text(text: str | None) -> int | None:
+    """The month number (1-12) a *bare* month label names, e.g. ``"February"``,
+    ``"Feb"`` or ``"Jan 2026"``. Returns None when the text carries a day number
+    (``"1 February"``) — that is a date cell resolved by ``parse_date``, not a
+    section caption — or names no month. Used to scope day-only rows to the month
+    of the table/section caption above them."""
+    if not text:
+        return None
+    m = _MONTH_LABEL_RE.match(normalize_token(text))
+    if not m:
+        return None
+    return _MONTHS.get(m.group(1))
+
+
 def _safe_date(year: int, month: int, day: int) -> date | None:
     try:
         return date(year, month, day)
