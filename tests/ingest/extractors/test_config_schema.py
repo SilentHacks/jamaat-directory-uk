@@ -90,6 +90,24 @@ def test_vertical_single_day_grid_parses_and_defaults_are_absent():
     assert "single_day" not in stored
 
 
+def test_month_sections_grid_parses_and_default_is_absent():
+    # An annual page where each month's day-only rows sit under a month caption.
+    cfg = SourceConfig.from_json(
+        '{"shape":"html_table","grid":{"month_sections":true,'
+        '"date":{"index":0,"format":"day_only"},'
+        '"columns":[{"kind":"jamaah","prayer":"fajr","index":2}]}}'
+    )
+    assert cfg.grid.month_sections is True
+    assert cfg.grid.date.format == "day_only"
+
+    # Default stays absent so existing stored configs are byte-identical.
+    stored = SourceConfig.from_json(
+        '{"shape":"html_table","grid":{"columns":['
+        '{"kind":"jamaah","prayer":"fajr","index":1}]}}'
+    ).to_json()
+    assert "month_sections" not in stored
+
+
 def test_rules_shape_requires_rules_block():
     with pytest.raises(ValueError):
         SourceConfig.from_json('{"shape":"rules"}')

@@ -36,6 +36,11 @@ class GridSpec(BaseModel):
     # Single-day table: no date axis (today's times, re-rendered daily). The engine
     # stamps every extracted cell with the run date. None/absent → multi-day.
     single_day: bool | None = None
+    # Month-section layout: an annual page where day-only rows are scoped by a
+    # month caption (one table per month, or full-width month rows within one
+    # table). The engine reads each section's month from its caption and pairs it
+    # with the day number. None/absent → the month comes from the run context.
+    month_sections: bool | None = None
     date: DateSpec | None = None
     columns: list[ColumnSpec] = Field(default_factory=list)
 
