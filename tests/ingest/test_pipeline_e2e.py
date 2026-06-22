@@ -50,3 +50,46 @@ def test_full_pipeline_writes_api_shaped_occurrences(engine):
             (1, "13:15", "1st Jumu’ah"),
             (2, "14:00", "2nd Jumu’ah"),
         ]
+
+
+PAGED_CONFIG = (
+    '{"shape":"html_table","grid":{"table_selector":"table.month-times",'
+    '"date":{"index":0,"format":"day_only"},"columns":['
+    '{"kind":"jamaah","prayer":"fajr","index":1},'
+    '{"kind":"jamaah","prayer":"dhuhr","index":2},'
+    '{"kind":"jamaah","prayer":"asr","index":3},'
+    '{"kind":"jamaah","prayer":"maghrib","index":4},'
+    '{"kind":"jamaah","prayer":"isha","index":5}]},'
+    '"paging":{"mode":"url_template","url_template":"https://m1.example/{year}/{month:02d}"}}'
+)
+
+
+def test_url_template_pipeline_crawls_two_months(engine):
+    month_a = (FIXTURES / "paging_month_a.html").read_text()
+    month_b = (FIXTURES / "paging_month_b.html").read_text()
+    pages = {
+        "https://m1.example/2026/06": month_a,
+        "https://m1.example/2026/07": month_b,
+    }
+    with session_scope(engine) as s:
+        s.add(Mosque(id="m1", name="M1", lat=52.0, lng=-1.0))
+        s.add(Source(id="s1", mosque_id="m1", url="https://m1.example/cal",
+                     config=PAGED_CONFIG, triage_status="authored"))
+
+    def fetcher(url, **kwargs):
+        if url in pages:
+            return FetchResult(url, 200, pages[url], "h")
+        return FetchResult(url, 404, None, None, error="not found")
+
+    out = extract_source(engine, "s1", today=date(2026, 6, 19), horizon_days=30, fetcher=fetcher)
+    assert out.lane == "auto_accept"
+
+    with session_scope(engine) as s:
+        # A day from the current month's page, resolved under June.
+        jun = repo.get_times(s, "m1", "2026-06-25", "2026-06-25")
+        assert [o.jamaah_time for o in jun if o.prayer == "fajr"] == ["04:32"]
+        # A day from the next month's page, resolved under July — only reachable
+        # because the second monthly page was crawled.
+        jul = repo.get_times(s, "m1", "2026-07-05", "2026-07-05")
+        assert [o.jamaah_time for o in jul if o.prayer == "fajr"] == ["04:40"]
+        assert {o.prayer for o in jul} == {"fajr", "dhuhr", "asr", "maghrib", "isha"}
