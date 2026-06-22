@@ -13,7 +13,11 @@ _WINDOWS: dict[str, tuple[int, int]] = {
     # ~01:00–01:30 near the solstice. The monotonic check still guards ordering.
     "fajr": (30, 7 * 60 + 30),
     "dhuhr": (11 * 60 + 30, 15 * 60),
-    "asr": (13 * 60, 19 * 60 + 30),
+    # Ceiling 20:30: UK high-summer Hanafi Asr begins late afternoon and the
+    # jamaah is well after (London late June reaches ~20:00). The monotonic check
+    # and the Maghrib window still enforce Asr < Maghrib, so the wider ceiling
+    # admits genuine summer data without disordering the day.
+    "asr": (13 * 60, 20 * 60 + 30),
     "maghrib": (15 * 60 + 30, 22 * 60 + 30),
     "isha": (17 * 60, 23 * 60 + 59),
     "jumuah": (12 * 60, 15 * 60),

@@ -106,6 +106,21 @@ def test_high_latitude_summer_fajr_is_in_window():
     assert res.lane == "auto_accept"
 
 
+def test_high_summer_late_asr_is_in_window():
+    # London late June (Hanafi Asr): Asr jamaah ~20:00 is real data — it begins
+    # late afternoon and the congregation is well after. Still before Maghrib.
+    occ = _day("2026-06-21", ["01:20", "13:30", "20:00", "21:25", "23:00"])
+    occ += _day("2026-06-22", ["01:21", "13:30", "20:00", "21:27", "23:00"])
+    res = run_gates(GRID_CFG, ExtractionResult(), occ)
+    assert res.lane == "auto_accept"
+
+
+def test_asr_above_window_ceiling_still_rejects():
+    occ = _day("2026-06-21", ["01:20", "13:30", "21:00", "21:25", "23:00"])  # 21:00 > 20:30
+    res = run_gates(GRID_CFG, ExtractionResult(), occ)
+    assert res.lane == "auto_reject"
+
+
 def test_fajr_below_window_floor_still_rejects():
     occ = _day("2026-06-21", ["00:15", "13:30", "18:30", "21:30", "23:00"])  # 00:15 < 00:30
     res = run_gates(GRID_CFG, ExtractionResult(), occ)
