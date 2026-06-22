@@ -8,7 +8,7 @@ from directory.ingest.author import author_mosque, run_authoring
 from directory.ingest.blocklist import load_blocklist
 from directory.ingest.discover import discover_mosque, run_discovery
 from directory.ingest.extractors.bespoke import load_bespoke
-from directory.ingest.fetch import render_playwright
+from directory.ingest.fetch import render_playwright, render_playwright_nav
 from directory.ingest.harness import OpenCodeAgenticHarness, OpenCodeHarness
 from directory.ingest.runner import extract_source, run_extract
 from directory.ingest.seed import (
@@ -74,17 +74,27 @@ def extract(
     concurrency: int | None = typer.Option(  # noqa: B008
         None, "--concurrency", help="Parallel source extracts (default from settings)"
     ),
+    render_js: bool = typer.Option(  # noqa: B008
+        True, "--render-js/--no-render-js",
+        help="Render JS sources (and click month paging) with a headless browser",
+    ),
 ) -> None:
     """Run the deterministic daily extract over authored sources."""
     settings = Settings()
     engine = make_engine(settings.database_url)
     load_bespoke(settings.bespoke_dir)
+    renderer = render_playwright if render_js else None
+    nav_renderer = render_playwright_nav if render_js else None
     if source_id is not None:
-        outcomes = [extract_source(engine, source_id, horizon_days=horizon_days)]
+        outcomes = [
+            extract_source(engine, source_id, horizon_days=horizon_days,
+                           renderer=renderer, nav_renderer=nav_renderer)
+        ]
     else:
         outcomes = run_extract(
             engine, horizon_days=horizon_days,
             concurrency=concurrency or settings.discover_concurrency,
+            renderer=renderer, nav_renderer=nav_renderer,
         )
     for o in outcomes:
         typer.echo(f"{o.source_id}: lane={o.lane} status={o.triage_status} rows={o.rows_written}")
@@ -151,11 +161,17 @@ def author(
     concurrency: int | None = typer.Option(  # noqa: B008
         None, "--concurrency", help="Parallel authoring workers (default from settings)"
     ),
+    render_js: bool = typer.Option(  # noqa: B008
+        True, "--render-js/--no-render-js",
+        help="Render JS sources (and click month paging) when verifying configs",
+    ),
 ) -> None:
     """Single-shot authoring of candidate sources via the agent harness."""
     settings = Settings()
     engine = make_engine(settings.database_url)
     harness = OpenCodeHarness()
+    renderer = render_playwright if render_js else None
+    nav_renderer = render_playwright_nav if render_js else None
     fallback = (
         OpenCodeAgenticHarness(
             page_budget=settings.author_page_budget,
@@ -172,6 +188,7 @@ def author(
                 engine, mosque_id, harness=harness, candidate_root=root, models=models,
                 fallback=fallback, fallback_model=settings.author_model_strong,
                 bespoke_root=settings.bespoke_dir, horizon_days=horizon_days,
+                renderer=renderer, nav_renderer=nav_renderer,
             )
         ]
     else:
@@ -182,6 +199,7 @@ def author(
             max_calls=max_calls or settings.author_max_calls,
             concurrency=concurrency or settings.author_concurrency,
             horizon_days=horizon_days,
+            renderer=renderer, nav_renderer=nav_renderer,
         )
     for o in outcomes:
         typer.echo(f"{o.mosque_id}: outcome={o.outcome} model={o.model}")

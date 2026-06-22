@@ -40,6 +40,15 @@ runs the quality gates, and upserts `occurrence` rows. A source that breaks
 (0 rows or failed gates) is flagged `needs_reauthor` and keeps its last-known
 data rather than being wiped.
 
+JS-rendered sources are re-rendered with a headless browser on the daily run
+(`--no-render-js` skips it for offline/CI). Timetables split across monthly
+pages add a `paging` block to their config — either a `url_template`
+(`/{year}/{month:02d}`) fetched once per month in the horizon, or a `render_nav`
+spec that drives the headless browser through a JS calendar (clicking a
+next-month control or picking from a month/year dropdown). The current month is
+required; a future month that isn't published yet is tolerated and flagged
+`partial_horizon` until it appears.
+
 ### Discovery (one-time, deterministic, £0)
 
 Resolve where each mosque's timetable lives and author a config for the known

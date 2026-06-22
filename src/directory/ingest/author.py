@@ -50,6 +50,7 @@ class _Ctx:
     horizon_days: int
     fetcher: object
     renderer: object
+    nav_renderer: object
 
 
 def extract_json(text: str) -> str | None:
@@ -119,7 +120,7 @@ def _attempt(
 
     result = extract_source(
         ctx.engine, mosque_id, today=ctx.today, horizon_days=ctx.horizon_days,
-        fetcher=ctx.fetcher, renderer=ctx.renderer,
+        fetcher=ctx.fetcher, renderer=ctx.renderer, nav_renderer=ctx.nav_renderer,
     )
     if result.triage_status in {"authored", "review"}:
         return AuthorOutcome(mosque_id, result.triage_status, model), None
@@ -140,6 +141,7 @@ def author_mosque(
     horizon_days: int = 60,
     fetcher=fetch,
     renderer=None,
+    nav_renderer=None,
 ) -> AuthorOutcome:
     with session_scope(engine) as s:
         src = repo.get_source(s, mosque_id)
@@ -161,7 +163,7 @@ def author_mosque(
             _Stage(fallback, (fallback_model,), build_browse_prompt, allow_bespoke=True)
         )
 
-    ctx = _Ctx(engine, bespoke_root, today, horizon_days, fetcher, renderer)
+    ctx = _Ctx(engine, bespoke_root, today, horizon_days, fetcher, renderer, nav_renderer)
     default_url = bundle.candidates[0].url
     detail: str | None = None
 
@@ -235,6 +237,7 @@ def run_authoring(
     horizon_days: int = 60,
     fetcher=fetch,
     renderer=None,
+    nav_renderer=None,
 ) -> list[AuthorOutcome]:
     with session_scope(engine) as s:
         candidates = repo.candidate_sources(s)
@@ -252,6 +255,7 @@ def run_authoring(
             engine, mid, harness=harness, candidate_root=candidate_root, models=models,
             fallback=fallback, fallback_model=fallback_model, bespoke_root=bespoke_root,
             today=today, horizon_days=horizon_days, fetcher=fetcher, renderer=renderer,
+            nav_renderer=nav_renderer,
         )
         if out.outcome in _FREE_OUTCOMES:
             budget.refund()

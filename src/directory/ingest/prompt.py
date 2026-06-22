@@ -28,7 +28,11 @@ Return ONE JSON object and nothing else (no prose, no code fences):
       "source": "fixed",
       "sessions": [{{"label": "1st Jumu'ah", "time": "13:00"}}]
     }},
-    "rules": {{"rules": [{{"prayer": "fajr", "fixed": "05:00"}}]}}
+    "rules": {{"rules": [{{"prayer": "fajr", "fixed": "05:00"}}]}},
+    "paging": {{                      // optional: timetable split across months
+      "mode": "url_template",         // dynamic per-month path
+      "url_template": "https://x.org/timetable/{{year}}/{{month:02d}}"
+    }}
   }}
 }}
 
@@ -41,6 +45,11 @@ Rules:
   column's "prayer" null — it is taken from the row label.
 - If the table shows only today's times with no date column, set "single_day": true
   (omit "date"); it is re-read every day.
+- Use "paging" ONLY when one page shows a single month and a different month
+  lives at a different URL (e.g. /2026/07). Set "mode":"url_template" and a
+  "url_template" with "{{year}}" and "{{month}}" (or "{{month:02d}}") placeholders.
+  Paging needs a real date column — never combine it with single_day / a
+  prayer-rows layout / "rules".
 - Copy the raw column header text into "header_seen" for every column.
 - If a jamaah cell is a relative offset like "+5" / "+10 min" (minutes after a
   begin time), set "value_kind": "offset" on that column. The offset resolves
@@ -94,6 +103,23 @@ time) rows. Import what you need from:
   from directory.ingest.extractors.engine import Cell, ExtractionResult
   from directory.domain import Prayer
   from directory.ingest.normalize import parse_date, parse_time
+
+If the timetable shows one month at a time, add a "paging" block to "config" so
+every month in the horizon is crawled:
+- Dynamic per-month URL (e.g. /2026/07): "paging": {{"mode":"url_template",
+  "url_template":"https://x.org/{{year}}/{{month:02d}}"}} (use "{{year}}" and
+  "{{month}}"/"{{month:02d}}").
+- JS calendar you must click to change month: "paging": {{"mode":"render_nav",
+  "nav": {{...}}}} where "nav" is either
+    {{"kind":"next","next_selector":"<css for the next-month control>",
+      "ready_selector":"<css that appears once the new month loads>"}}
+  or, for a month picker,
+    {{"kind":"select","month_select":"<css for the month <select>>",
+      "year_select":"<css for the year <select>, if any>"}}.
+  "select" assumes the month dropdown lists January–December in order; prefer
+  "kind":"next" when unsure.
+Paging needs a real date column — never combine it with single_day / a
+prayer-rows layout / "rules".
 
 Rules:
 - "prayer" is exactly one of: {_PRAYERS}.

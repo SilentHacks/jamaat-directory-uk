@@ -1,7 +1,7 @@
 import pytest
 
 from directory.domain import Prayer
-from directory.ingest.extractors.config_schema import SourceConfig
+from directory.ingest.extractors.config_schema import NavSpec, PagingSpec, SourceConfig
 
 
 def test_html_table_roundtrips_through_json():
@@ -97,3 +97,59 @@ def test_rules_shape_requires_rules_block():
         '{"shape":"rules","rules":{"rules":[{"prayer":"dhuhr","fixed":"13:30"}]}}'
     )
     assert ok.rules.rules[0].prayer == Prayer.DHUHR
+
+
+def test_paging_url_template_parses_and_roundtrips():
+    cfg = SourceConfig.from_json(
+        '{"shape":"html_table","grid":{"columns":['
+        '{"kind":"jamaah","prayer":"fajr","index":1}]},'
+        '"paging":{"mode":"url_template","url_template":"https://x.org/{year}/{month:02d}"}}'
+    )
+    assert cfg.paging.mode == "url_template"
+    assert cfg.paging.url_template == "https://x.org/{year}/{month:02d}"
+    assert SourceConfig.from_json(cfg.to_json()).paging.url_template == cfg.paging.url_template
+
+
+def test_paging_render_nav_parses():
+    cfg = SourceConfig.from_json(
+        '{"shape":"html_table","grid":{"columns":['
+        '{"kind":"jamaah","prayer":"fajr","index":1}]},'
+        '"paging":{"mode":"render_nav","nav":{"kind":"next",'
+        '"next_selector":".cal-next","ready_selector":".cal-grid"}}}'
+    )
+    assert cfg.paging.mode == "render_nav"
+    assert cfg.paging.nav.kind == "next"
+    assert cfg.paging.nav.next_selector == ".cal-next"
+    assert cfg.paging.nav.settle_ms == 800  # default
+
+
+def test_paging_default_absent_for_legacy_configs():
+    # An existing stored config never grows a paging key → no DB churn.
+    stored = SourceConfig.from_json(
+        '{"shape":"html_table","grid":{"columns":['
+        '{"kind":"jamaah","prayer":"fajr","index":1}]}}'
+    ).to_json()
+    assert SourceConfig.from_json(stored).paging is None
+    assert "paging" not in stored
+
+
+def test_paging_url_template_requires_template():
+    with pytest.raises(ValueError):
+        PagingSpec.model_validate({"mode": "url_template"})
+
+
+def test_paging_render_nav_requires_nav():
+    with pytest.raises(ValueError):
+        PagingSpec.model_validate({"mode": "render_nav"})
+
+
+def test_nav_next_requires_next_selector():
+    with pytest.raises(ValueError):
+        NavSpec.model_validate({"kind": "next"})
+
+
+def test_nav_select_requires_month_select():
+    with pytest.raises(ValueError):
+        NavSpec.model_validate({"kind": "select"})
+    ok = NavSpec.model_validate({"kind": "select", "month_select": "#month"})
+    assert ok.month_select == "#month"

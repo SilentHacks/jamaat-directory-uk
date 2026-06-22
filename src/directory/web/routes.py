@@ -12,9 +12,9 @@ from directory.api.deps import get_engine
 from directory.config import get_settings
 from directory.db import session_scope
 from directory.ingest.extractors.config_schema import SourceConfig
-from directory.ingest.extractors.engine import extract
 from directory.ingest.fetch import fetch
 from directory.ingest.materialize import materialize
+from directory.ingest.pager import collect_documents, extract_documents
 from directory.ingest.review import approve_source, fix_mapping, reject_source
 
 _templates_dir = resources.files("directory.web").joinpath("templates")
@@ -147,13 +147,24 @@ def review_preview(
             raise HTTPException(404, "source not found")
         url, config_raw, requires_js = src.url, src.config, bool(src.requires_js)
     rows = []
-    fetched = fetch(url, requires_js=requires_js) if url else None
-    if fetched and fetched.html and config_raw:
+    if config_raw:
         config = SourceConfig.from_json(config_raw)
         today = date.today()
-        result = extract(fetched.html, config, year=today.year, month=today.month, today=today)
-        horizon_end = today + timedelta(days=7)
-        rows = materialize(result, config, horizon_start=today, horizon_end=horizon_end)
+        horizon_days = 7
+        # No renderer/nav_renderer here: the web process never drives a browser.
+        # A 7-day window is almost always one month, so url_template previews
+        # fetch the current month; render_nav previews show nothing extra (the
+        # config was already verified through the gates at authoring/approval).
+        docs, _err = collect_documents(
+            config, url, today=today, horizon_days=horizon_days,
+            requires_js=requires_js, fetcher=fetch,
+        )
+        if docs:
+            result = extract_documents(docs, config, today=today)
+            rows = materialize(
+                result, config, horizon_start=today,
+                horizon_end=today + timedelta(days=horizon_days),
+            )
     return templates.TemplateResponse(request, "_review_preview.html", {"rows": rows})
 
 

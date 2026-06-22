@@ -1,5 +1,5 @@
 from directory.ingest.discover import Candidate, CandidateBundle
-from directory.ingest.prompt import build_author_prompt
+from directory.ingest.prompt import build_author_prompt, build_browse_prompt
 
 
 def _bundle():
@@ -44,6 +44,20 @@ def test_prompt_documents_vertical_and_single_day_layouts():
     p = build_author_prompt(_bundle())
     assert "prayer_label_index" in p
     assert "single_day" in p
+
+
+def test_author_prompt_documents_url_template_paging():
+    p = build_author_prompt(_bundle())
+    assert "paging" in p
+    assert "url_template" in p
+    assert "{month" in p  # placeholder advertised to the model
+
+
+def test_browse_prompt_documents_both_paging_modes():
+    p = build_browse_prompt(_bundle())
+    assert "url_template" in p
+    assert "render_nav" in p
+    assert "next_selector" in p and "month_select" in p
 
 
 def test_prompt_truncates_regions_and_caps_candidate_count():
