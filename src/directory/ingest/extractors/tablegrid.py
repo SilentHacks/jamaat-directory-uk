@@ -40,6 +40,28 @@ def grid_matrix(table) -> list[list[str]]:
     return [[occupied.get((r, c), "") for c in range(width)] for r in range(len(rows))]
 
 
+def bare_thead_rows(table) -> list[list[str]]:
+    """Header rows from ``<thead>`` elements whose ``<th>``/``<td>`` cells sit
+    *directly* under the thead with no ``<tr>`` wrapper — colspan-expanded so they
+    align with the body matrix. Some plugins (e.g. the Divi "Daily Prayer Time"
+    monthly table) emit grouped headers this way, which the ``<tr>``-based
+    ``grid_matrix`` cannot see. Returns one expanded list per such thead; empty
+    when every thead is normally ``<tr>``-wrapped (the common case)."""
+    rows: list[list[str]] = []
+    for thead in table.find_all("thead"):
+        if thead.find("tr") is not None:
+            continue  # a normal <tr> header — grid_matrix/header_depth handle it
+        cells = thead.find_all(["th", "td"], recursive=False)
+        if not cells:
+            continue
+        row: list[str] = []
+        for cell in cells:
+            text = cell.get_text(" ", strip=True)
+            row.extend([text] * _int(cell.get("colspan"), 1))
+        rows.append(row)
+    return rows
+
+
 def header_depth(table) -> int:
     """Number of leading header rows: ``<thead>`` row count if present, else the
     run of leading ``<tr>``s whose cells are all ``<th>``, else inferred from
