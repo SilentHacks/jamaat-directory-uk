@@ -14,8 +14,9 @@ from datetime import date, timedelta
 from directory.ingest.extractors.config_schema import NavSpec, SourceConfig
 from directory.ingest.extractors.engine import ExtractionResult, extract
 
-# (base_url, nav, count) -> one HTML document per month, current month first.
-NavRenderer = Callable[[str, NavSpec, int], list[str]]
+# (base_url, nav, months) -> one HTML document per month, in the order given
+# (current month first). months is the list of (year, month) pairs to capture.
+NavRenderer = Callable[[str, NavSpec, list[tuple[int, int]]], list[str]]
 
 
 @dataclass
@@ -81,7 +82,7 @@ def collect_documents(
     if nav_renderer is None:
         return [], "render_nav config requires a navigation renderer"
     try:
-        htmls = nav_renderer(url, paging.nav, len(months))
+        htmls = nav_renderer(url, paging.nav, months)
     except Exception as exc:
         return [], f"nav render failed: {type(exc).__name__}: {exc}"
     docs = [MonthDoc(y, m, h) for (y, m), h in zip(months, htmls, strict=False) if h]

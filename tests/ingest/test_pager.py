@@ -128,9 +128,9 @@ def test_url_template_current_month_failure_is_an_error():
 def test_render_nav_uses_nav_renderer():
     calls = {}
 
-    def nav_renderer(url, nav, count):
-        calls["url"], calls["count"], calls["kind"] = url, count, nav.kind
-        return [MONTH_TABLE] * count
+    def nav_renderer(url, nav, months):
+        calls["url"], calls["months"], calls["kind"] = url, months, nav.kind
+        return [MONTH_TABLE] * len(months)
 
     docs, err = collect_documents(
         NAV_CONFIG, "https://js.org/cal", today=date(2026, 6, 20),
@@ -139,11 +139,15 @@ def test_render_nav_uses_nav_renderer():
     )
     assert err is None
     assert [(d.year, d.month) for d in docs] == [(2026, 6), (2026, 7), (2026, 8)]
-    assert calls == {"url": "https://js.org/cal", "count": 3, "kind": "next"}
+    assert calls == {
+        "url": "https://js.org/cal",
+        "months": [(2026, 6), (2026, 7), (2026, 8)],
+        "kind": "next",
+    }
 
 
 def test_render_nav_tolerates_short_return():
-    def nav_renderer(url, nav, count):
+    def nav_renderer(url, nav, months):
         return [MONTH_TABLE]  # only the current month came back
 
     docs, err = collect_documents(
@@ -165,7 +169,7 @@ def test_render_nav_without_renderer_is_an_error():
 
 
 def test_render_nav_renderer_crash_is_an_error():
-    def nav_renderer(url, nav, count):
+    def nav_renderer(url, nav, months):
         raise RuntimeError("browser died")
 
     docs, err = collect_documents(
