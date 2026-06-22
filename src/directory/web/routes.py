@@ -151,7 +151,7 @@ def review_preview(
     if fetched and fetched.html and config_raw:
         config = SourceConfig.from_json(config_raw)
         today = date.today()
-        result = extract(fetched.html, config, year=today.year, month=today.month)
+        result = extract(fetched.html, config, year=today.year, month=today.month, today=today)
         horizon_end = today + timedelta(days=7)
         rows = materialize(result, config, horizon_start=today, horizon_end=horizon_end)
     return templates.TemplateResponse(request, "_review_preview.html", {"rows": rows})
