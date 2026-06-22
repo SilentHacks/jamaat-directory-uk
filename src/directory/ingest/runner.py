@@ -5,10 +5,16 @@ from datetime import UTC, date, datetime, timedelta
 from directory import repository as repo
 from directory.db import session_scope
 from directory.ingest.extractors.config_schema import SourceConfig
-from directory.ingest.extractors.engine import extract
-from directory.ingest.fetch import fetch
+from directory.ingest.fetch import fetch, html_hash
 from directory.ingest.gates import run_gates
 from directory.ingest.materialize import materialize
+from directory.ingest.pager import (
+    collect_documents,
+    extract_documents,
+    months_in_horizon,
+)
+
+PARTIAL_HORIZON = "partial_horizon"
 
 
 @dataclass
@@ -38,6 +44,7 @@ def extract_source(
     horizon_days: int = 60,
     fetcher=fetch,
     renderer=None,
+    nav_renderer=None,
     accept_review: bool = False,
 ) -> ExtractOutcome:
     today = today or date.today()
@@ -50,19 +57,31 @@ def extract_source(
         url, config_raw, mosque_id = src.url, src.config, src.mosque_id
         requires_js = bool(src.requires_js)
 
-    fetched = fetcher(url, requires_js=requires_js, renderer=renderer)
-    if fetched.error or not fetched.html:
-        return _reauthor(engine, source_id, fetched.error or "empty body")
-
+    # Parse before fetching: the pager needs the config, and a bad config is a
+    # re-author either way — no point spending a fetch on it.
     try:
         config = SourceConfig.from_json(config_raw)
     except ValueError as exc:
         return _reauthor(engine, source_id, f"config parse: {exc}")
 
-    result = extract(fetched.html, config, year=today.year, month=today.month, today=today)
+    docs, err = collect_documents(
+        config, url, today=today, horizon_days=horizon_days, requires_js=requires_js,
+        fetcher=fetcher, renderer=renderer, nav_renderer=nav_renderer,
+    )
+    if err or not docs:
+        return _reauthor(engine, source_id, err or "empty body")
+
+    result = extract_documents(docs, config, today=today)
+    combined_html = "\n".join(d.html for d in docs)
     rows = materialize(result, config, horizon_start=today, horizon_end=horizon_end)
-    gate = run_gates(config, result, rows, html_text=fetched.html)
+    gate = run_gates(config, result, rows, html_text=combined_html)
     now = datetime.now(tz=UTC).isoformat(timespec="seconds")
+
+    # A short month set (a future month not yet published) is tolerated, but
+    # flagged so a chronically partial source is visible.
+    flags = list(gate.flags)
+    if len(docs) < len(months_in_horizon(today, horizon_days)):
+        flags.append(PARTIAL_HORIZON)
 
     activate = gate.lane == "auto_accept" or (gate.lane == "review" and accept_review)
     if activate:
@@ -70,8 +89,8 @@ def extract_source(
             n = repo.replace_source_occurrences(s, source_id, mosque_id, rows)
             repo.set_source_state(
                 s, source_id, triage_status="authored", confidence=gate.confidence,
-                last_status="ok", last_fetched_at=now, source_html_hash=fetched.html_hash,
-                flags=gate.flags,
+                last_status="ok", last_fetched_at=now, source_html_hash=html_hash(combined_html),
+                flags=flags,
             )
             repo.record_extractor_run(s, source_id, ok=True, rows_written=n)
         return ExtractOutcome(source_id, True, n, gate.lane, "authored")
@@ -97,6 +116,7 @@ def run_extract(
     horizon_days: int = 60,
     fetcher=fetch,
     renderer=None,
+    nav_renderer=None,
     concurrency: int = 16,
 ) -> list[ExtractOutcome]:
     with session_scope(engine) as s:
@@ -105,7 +125,7 @@ def run_extract(
     def _one(sid: str) -> ExtractOutcome:
         return extract_source(
             engine, sid, today=today, horizon_days=horizon_days,
-            fetcher=fetcher, renderer=renderer,
+            fetcher=fetcher, renderer=renderer, nav_renderer=nav_renderer,
         )
 
     # source_ids are id-ordered; pool.map preserves order → deterministic results.

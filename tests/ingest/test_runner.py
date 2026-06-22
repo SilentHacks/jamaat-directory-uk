@@ -1,9 +1,10 @@
+import json
 from datetime import date
 
 from directory import repository as repo
 from directory.db import session_scope
 from directory.ingest.fetch import FetchResult
-from directory.ingest.runner import extract_source, run_extract
+from directory.ingest.runner import PARTIAL_HORIZON, extract_source, run_extract
 from directory.models import Mosque, Occurrence, Source
 
 GOOD_HTML = """
@@ -83,3 +84,112 @@ def test_run_extract_processes_all_authored(engine):
     outs = run_extract(engine, today=date(2026, 6, 20), horizon_days=7,
                        fetcher=_fetcher_returning(GOOD_HTML))
     assert [o.source_id for o in outs] == ["s1"]
+
+
+# ---------------------------------------------------------------------------
+# Month paging: a source whose timetable spans monthly pages.
+# ---------------------------------------------------------------------------
+def _month_row(day: str) -> str:
+    # One day-only row with all five prayers; the resolved date depends on the
+    # (year, month) the page is extracted under.
+    return (
+        '<table class="t">'
+        "<tr><th>Date</th><th>Fajr</th><th>Dhuhr</th><th>Asr</th>"
+        "<th>Maghrib</th><th>Isha</th></tr>"
+        f"<tr><td>{day}</td><td>05:00</td><td>13:30</td><td>18:30</td>"
+        "<td>21:30</td><td>23:00</td></tr></table>"
+    )
+
+
+PAGED_CONFIG = (
+    '{"shape":"html_table","grid":{"table_selector":"table.t",'
+    '"date":{"index":0,"format":"day_only"},"columns":['
+    '{"kind":"jamaah","prayer":"fajr","index":1},'
+    '{"kind":"jamaah","prayer":"dhuhr","index":2},'
+    '{"kind":"jamaah","prayer":"asr","index":3},'
+    '{"kind":"jamaah","prayer":"maghrib","index":4},'
+    '{"kind":"jamaah","prayer":"isha","index":5}]},'
+    '"paging":{"mode":"url_template","url_template":"https://m1.example/{year}/{month:02d}"}}'
+)
+
+
+def _paged_fetcher(pages):
+    def _f(url, **kwargs):
+        if url in pages:
+            return FetchResult(url, 200, pages[url], "h")
+        return FetchResult(url, 404, None, None, error="not found")
+
+    return _f
+
+
+def _source_flags(engine, source_id):
+    with session_scope(engine) as s:
+        return json.loads(repo.get_source(s, source_id).flags or "[]")
+
+
+def test_url_template_writes_occurrences_across_months(engine):
+    _seed(engine, PAGED_CONFIG)
+    fetcher = _paged_fetcher({
+        "https://m1.example/2026/06": _month_row("25"),  # in horizon (>= Jun 20)
+        "https://m1.example/2026/07": _month_row("05"),  # in horizon (<= Jul 20)
+    })
+    out = extract_source(engine, "s1", today=date(2026, 6, 20), horizon_days=30,
+                         fetcher=fetcher)
+    assert out.lane == "auto_accept"
+    assert out.rows_written == 10  # five prayers on each of two dates
+    with session_scope(engine) as s:
+        dates = sorted({o.date for o in s.query(Occurrence).all()})
+        assert dates == ["2026-06-25", "2026-07-05"]
+    assert PARTIAL_HORIZON not in _source_flags(engine, "s1")
+
+
+def test_url_template_current_month_failure_reauthors(engine):
+    _seed(engine, PAGED_CONFIG)
+    # current month (June) missing → fatal, even though July is available
+    fetcher = _paged_fetcher({"https://m1.example/2026/07": _month_row("05")})
+    out = extract_source(engine, "s1", today=date(2026, 6, 20), horizon_days=30,
+                         fetcher=fetcher)
+    assert out.triage_status == "needs_reauthor"
+    with session_scope(engine) as s:
+        assert s.query(Occurrence).all() == []
+
+
+def test_url_template_missing_future_month_is_partial_not_fatal(engine):
+    _seed(engine, PAGED_CONFIG)
+    # July not yet published → keep June, flag partial, stay authored
+    fetcher = _paged_fetcher({"https://m1.example/2026/06": _month_row("25")})
+    out = extract_source(engine, "s1", today=date(2026, 6, 20), horizon_days=30,
+                         fetcher=fetcher)
+    assert out.triage_status == "authored"
+    assert out.rows_written == 5
+    assert PARTIAL_HORIZON in _source_flags(engine, "s1")
+
+
+RENDER_NAV_CONFIG = (
+    '{"shape":"html_table","grid":{"table_selector":"table.t",'
+    '"date":{"index":0,"format":"day_only"},"columns":['
+    '{"kind":"jamaah","prayer":"fajr","index":1},'
+    '{"kind":"jamaah","prayer":"dhuhr","index":2},'
+    '{"kind":"jamaah","prayer":"asr","index":3},'
+    '{"kind":"jamaah","prayer":"maghrib","index":4},'
+    '{"kind":"jamaah","prayer":"isha","index":5}]},'
+    '"paging":{"mode":"render_nav","nav":{"kind":"next","next_selector":".n"}}}'
+)
+
+
+def test_render_nav_source_uses_nav_renderer(engine):
+    with session_scope(engine) as s:
+        s.add(Mosque(id="m1", name="M1", lat=52.0, lng=-1.0))
+        s.add(Source(id="s1", mosque_id="m1", url="https://m1.example/cal",
+                     config=RENDER_NAV_CONFIG, triage_status="authored", requires_js=1))
+
+    def nav_renderer(url, nav, months):
+        # current month shows day 25, next month day 5
+        return [_month_row("25"), _month_row("05")]
+
+    out = extract_source(engine, "s1", today=date(2026, 6, 20), horizon_days=30,
+                         fetcher=_paged_fetcher({}), nav_renderer=nav_renderer)
+    assert out.lane == "auto_accept"
+    with session_scope(engine) as s:
+        dates = sorted({o.date for o in s.query(Occurrence).all()})
+        assert dates == ["2026-06-25", "2026-07-05"]
