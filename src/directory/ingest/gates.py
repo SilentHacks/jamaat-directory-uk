@@ -43,6 +43,9 @@ def _minutes(hhmm: str) -> int:
 def lint_config(config: SourceConfig) -> list[str]:
     problems: list[str] = []
     grid = config.grid
+    # dom_records is deliberately omitted: its prayer columns are induced from the
+    # rendered stream at extract time, so an empty grid.columns is expected, not a
+    # defect. dom_grid carries a normal html_table grid and is checked here.
     if config.shape in {"html_table", "html_repeated"}:
         if grid is None or not grid.columns:
             problems.append("grid shape has no columns")
