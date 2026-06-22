@@ -84,6 +84,17 @@ def test_partial_timetable_detects_but_gates_send_to_review():
     assert gate.lane == "review"  # missing maghrib + isha
 
 
+def test_horizontal_multiday_not_flagged_single_day_or_vertical():
+    # The classic layout must still take the first cascade branch unchanged: a
+    # real date axis, not single_day, not prayer-rows.
+    match = GenericTableDetector().detect(GENERIC_HTML, "https://m.example/")
+    g = match.config.grid
+    assert g.transpose is False
+    assert g.single_day is None
+    assert g.prayer_label_index is None
+    assert g.date.index == 0
+
+
 def test_no_match_on_non_timetable_table():
     assert GenericTableDetector().detect(PLAIN_HTML, "https://m.example/") is None
 

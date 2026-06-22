@@ -62,6 +62,23 @@ def test_detects_transpose_multiday_table():
     assert len(g.columns) == 5
 
 
+# A multi-row table whose "date" column is unparseable must NOT be mistaken for a
+# single-day snapshot (which would silently drop every row but one).
+MULTIROW_NODATE_HTML = """
+<html><body>
+<table>
+  <tr><th>When</th><th>Fajr</th><th>Dhuhr</th><th>Asr</th><th>Maghrib</th><th>Isha</th></tr>
+  <tr><td>foo</td><td>05:00</td><td>13:15</td><td>18:30</td><td>21:10</td><td>22:30</td></tr>
+  <tr><td>bar</td><td>05:02</td><td>13:16</td><td>18:31</td><td>21:11</td><td>22:31</td></tr>
+</table>
+</body></html>
+"""
+
+
+def test_multi_row_table_without_parseable_dates_is_not_collapsed():
+    assert GenericTableDetector().detect(MULTIROW_NODATE_HTML, "https://m.example/") is None
+
+
 def test_transpose_config_extracts_every_day():
     match = GenericTableDetector().detect(TRANSPOSE_HTML, "https://m.example/")
     result = extract(TRANSPOSE_HTML, match.config, year=2026, month=6)
