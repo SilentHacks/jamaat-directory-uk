@@ -213,7 +213,7 @@ def _verify(html: str, match, *, today: date | None, horizon_days: int):
     GateResult and a completeness score, or None when the page does not verify."""
     today = today or date.today()
     config = match.config
-    result = extract(html, config, year=today.year, month=today.month)
+    result = extract(html, config, year=today.year, month=today.month, today=today)
     rows = materialize(
         result, config, horizon_start=today, horizon_end=today + timedelta(days=horizon_days)
     )

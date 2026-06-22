@@ -59,7 +59,7 @@ def extract_source(
     except ValueError as exc:
         return _reauthor(engine, source_id, f"config parse: {exc}")
 
-    result = extract(fetched.html, config, year=today.year, month=today.month)
+    result = extract(fetched.html, config, year=today.year, month=today.month, today=today)
     rows = materialize(result, config, horizon_start=today, horizon_end=horizon_end)
     gate = run_gates(config, result, rows, html_text=fetched.html)
     now = datetime.now(tz=UTC).isoformat(timespec="seconds")

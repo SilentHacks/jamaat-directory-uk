@@ -4,10 +4,10 @@ from datetime import date
 
 from bs4 import BeautifulSoup
 
-from directory.domain import Prayer
+from directory.domain import DAILY_PRAYERS, Prayer
 from directory.ingest.extractors.config_schema import SourceConfig
 from directory.ingest.extractors.tablegrid import grid_matrix
-from directory.ingest.normalize import parse_date, parse_offset, parse_time
+from directory.ingest.normalize import parse_date, parse_offset, parse_time, resolve_prayer
 
 
 @dataclass
@@ -42,8 +42,74 @@ def register_widget(platform: str, fn: WidgetExtractor) -> None:
     WIDGET_EXTRACTORS[platform] = fn
 
 
+def _cell_from_text(raw: str, col, prayer: Prayer, d: date) -> Cell | None:
+    """Build one Cell from a raw table value for a column whose prayer is already
+    resolved (from the header in column layout, or a row label in row layout).
+    Honours value_kind="offset". Returns None when the text holds no usable value."""
+    if col.value_kind == "offset":
+        off = parse_offset(raw)
+        if off is None:
+            return None
+        return Cell(
+            date=d, prayer=prayer, kind=col.kind, time=None,
+            header_seen=col.header_seen, offset_min=off,
+            base_prayer=col.base_prayer or prayer,
+        )
+    t = parse_time(raw, prefer_pm=_prefer_pm(prayer))
+    if t is None:
+        return None
+    return Cell(date=d, prayer=prayer, kind=col.kind, time=t, header_seen=col.header_seen)
+
+
+def _extract_vertical(matrix, grid, run_day: date) -> ExtractionResult:
+    """Prayer-rows layout: each body row's label column names the prayer; the
+    configured columns name the kinds. Rows whose label is not a daily prayer
+    (a header row, a Sunrise row) are skipped. All cells are dated run_day."""
+    result = ExtractionResult()
+    label_idx = grid.prayer_label_index
+    for texts in matrix:
+        result.texts.extend(texts)
+        if label_idx >= len(texts):
+            continue
+        match = resolve_prayer(texts[label_idx])
+        prayer = match.prayer
+        if prayer is None or match.fuzzy or prayer not in DAILY_PRAYERS:
+            continue
+        for col in grid.columns:
+            if col.index is None or col.index >= len(texts):
+                continue
+            cell = _cell_from_text(texts[col.index], col, prayer, run_day)
+            if cell is not None:
+                result.cells.append(cell)
+    return result
+
+
+def _extract_single_day(matrix, grid, run_day: date) -> ExtractionResult:
+    """Horizontal layout with no date axis: prayers are in the header, the first
+    body row that yields times is today's snapshot. All cells are dated run_day."""
+    result = ExtractionResult()
+    for texts in matrix:
+        result.texts.extend(texts)
+        emitted = False
+        for col in grid.columns:
+            if col.index is None or col.index >= len(texts) or col.prayer is None:
+                continue
+            cell = _cell_from_text(texts[col.index], col, col.prayer, run_day)
+            if cell is not None:
+                result.cells.append(cell)
+                emitted = True
+        if emitted:
+            break  # one data row is the whole timetable; ignore any stray rows
+    return result
+
+
 def extract_html_table(
-    html: str, config: SourceConfig, *, year: int, month: int | None = None
+    html: str,
+    config: SourceConfig,
+    *,
+    year: int,
+    month: int | None = None,
+    today: date | None = None,
 ) -> ExtractionResult:
     grid = config.grid
     soup = BeautifulSoup(html, "lxml")
@@ -57,6 +123,12 @@ def extract_html_table(
     if grid.transpose:
         matrix = [list(row) for row in zip(*matrix, strict=False)]
 
+    run_day = today or date.today()
+    if grid.prayer_label_index is not None:
+        return _extract_vertical(matrix, grid, run_day)
+    if grid.single_day:
+        return _extract_single_day(matrix, grid, run_day)
+
     result = ExtractionResult()
     date_idx = grid.date.index if grid.date else None
     for texts in matrix:
@@ -67,34 +139,17 @@ def extract_html_table(
         if d is None:
             continue
         for col in grid.columns:
-            if col.index is None or col.index >= len(texts):
+            if col.index is None or col.index >= len(texts) or col.prayer is None:
                 continue
-            if col.prayer is None:
-                continue
-            raw = texts[col.index]
-            if col.value_kind == "offset":
-                off = parse_offset(raw)
-                if off is None:
-                    continue
-                result.cells.append(
-                    Cell(
-                        date=d, prayer=col.prayer, kind=col.kind, time=None,
-                        header_seen=col.header_seen, offset_min=off,
-                        base_prayer=col.base_prayer or col.prayer,
-                    )
-                )
-                continue
-            t = parse_time(raw, prefer_pm=_prefer_pm(col.prayer))
-            if t is None:
-                continue
-            result.cells.append(
-                Cell(date=d, prayer=col.prayer, kind=col.kind, time=t, header_seen=col.header_seen)
-            )
+            cell = _cell_from_text(texts[col.index], col, col.prayer, d)
+            if cell is not None:
+                result.cells.append(cell)
     return result
 
 
 def extract_html_repeated(
-    html: str, config: SourceConfig, *, year: int, month: int | None = None
+    html: str, config: SourceConfig, *, year: int, month: int | None = None,
+    today: date | None = None,
 ) -> ExtractionResult:
     grid = config.grid
     soup = BeautifulSoup(html, "lxml")
@@ -131,14 +186,16 @@ def extract_html_repeated(
 
 
 def _extract_rules(
-    html: str, config: SourceConfig, *, year: int, month: int | None = None
+    html: str, config: SourceConfig, *, year: int, month: int | None = None,
+    today: date | None = None,
 ) -> ExtractionResult:
     # "rules" yields no scraped cells; times are produced later by materialize_rules.
     return ExtractionResult()
 
 
 def _extract_widget(
-    html: str, config: SourceConfig, *, year: int, month: int | None = None
+    html: str, config: SourceConfig, *, year: int, month: int | None = None,
+    today: date | None = None,
 ) -> ExtractionResult:
     platform = config.widget.platform
     fn = WIDGET_EXTRACTORS.get(platform)
@@ -148,7 +205,8 @@ def _extract_widget(
 
 
 def _extract_bespoke(
-    html: str, config: SourceConfig, *, year: int, month: int | None = None
+    html: str, config: SourceConfig, *, year: int, month: int | None = None,
+    today: date | None = None,
 ) -> ExtractionResult:
     # Local import: bespoke modules are authored against this module's Cell /
     # ExtractionResult, so the package imports engine — a top-level import here
@@ -177,9 +235,10 @@ _SHAPE_EXTRACTORS: dict[str, Callable[..., ExtractionResult]] = {
 
 
 def extract(
-    html: str, config: SourceConfig, *, year: int, month: int | None = None
+    html: str, config: SourceConfig, *, year: int, month: int | None = None,
+    today: date | None = None,
 ) -> ExtractionResult:
     handler = _SHAPE_EXTRACTORS.get(config.shape)
     if handler is None:
         raise ValueError(f"unsupported shape: {config.shape!r}")
-    return handler(html, config, year=year, month=month)
+    return handler(html, config, year=year, month=month, today=today)
