@@ -188,6 +188,45 @@ def test_vertical_table_reads_prayer_from_row_label_dated_today():
     assert all(c.prayer in {Prayer.FAJR, Prayer.DHUHR, Prayer.ISHA} for c in result.cells)
 
 
+VERTICAL_OFFSET_HTML = """
+<table class="vo">
+  <tr><th>Prayer</th><th>Begins</th><th>Jamaah</th></tr>
+  <tr><td>Maghrib</td><td>9:20 pm</td><td>+5</td></tr>
+</table>
+"""
+
+VERTICAL_OFFSET_CFG = SourceConfig.from_json(
+    """
+    {
+      "shape": "html_table",
+      "grid": {
+        "table_selector": "table.vo",
+        "prayer_label_index": 0,
+        "single_day": true,
+        "columns": [
+          {"kind": "begin", "index": 1},
+          {"kind": "jamaah", "index": 2, "value_kind": "offset"}
+        ]
+      }
+    }
+    """
+)
+
+
+def test_vertical_offset_column_takes_base_prayer_from_the_row_label():
+    today = date(2026, 6, 22)
+    result = extract_html_table(
+        VERTICAL_OFFSET_HTML, VERTICAL_OFFSET_CFG,
+        year=today.year, month=today.month, today=today,
+    )
+    cells = {(c.prayer, c.kind): c for c in result.cells}
+    begin = cells[(Prayer.MAGHRIB, "begin")]
+    jamaah = cells[(Prayer.MAGHRIB, "jamaah")]
+    assert begin.time == "21:20"
+    assert jamaah.time is None and jamaah.offset_min == 5
+    assert jamaah.base_prayer == Prayer.MAGHRIB  # row label fills the offset base
+
+
 def test_offset_column_yields_offset_cell_not_time():
     result = extract_html_table(OFFSET_HTML, OFFSET_CFG, year=2026, month=6)
     cells = {(c.prayer, c.kind): c for c in result.cells if c.date == date(2026, 6, 1)}
