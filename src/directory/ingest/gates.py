@@ -49,6 +49,32 @@ def lint_config(config: SourceConfig) -> list[str]:
             for col in grid.columns:
                 if col.kind == "jamaah" and col.prayer is None and not row_labelled:
                     problems.append(f"jamaah column without prayer: {col!r}")
+    problems.extend(_lint_paging(config))
+    return problems
+
+
+def _lint_paging(config: SourceConfig) -> list[str]:
+    """Paging only makes sense for multi-day, date-bearing layouts. The single-day
+    and prayer-rows layouts stamp the run date and ignore month/year, so paging
+    them would merely re-stamp today; 'rules' scrapes no cells at all."""
+    paging = config.paging
+    if paging is None:
+        return []
+    problems: list[str] = []
+    if config.shape == "rules":
+        problems.append("paging not supported for 'rules' shape")
+    grid = config.grid
+    if grid is not None and (grid.single_day or grid.prayer_label_index is not None):
+        problems.append("paging requires a multi-day date layout (not single_day/prayer-rows)")
+    if paging.mode == "url_template":
+        template = paging.url_template or ""
+        if "{month" not in template:
+            problems.append("paging url_template must vary by {month}")
+        else:
+            try:
+                template.format(year=2000, month=1)
+            except (KeyError, ValueError, IndexError) as exc:
+                problems.append(f"paging url_template invalid: {exc}")
     return problems
 
 

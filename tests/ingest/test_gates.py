@@ -192,3 +192,56 @@ def test_lint_allows_prayerless_columns_in_prayer_rows_layout():
         '"columns":[{"kind":"begin","index":1},{"kind":"jamaah","index":2}]}}'
     )
     assert lint_config(vertical) == []
+
+
+def test_lint_accepts_paging_on_multiday_table():
+    cfg = SourceConfig.from_json(
+        '{"shape":"html_table","grid":{"date":{"index":0},'
+        '"columns":[{"kind":"jamaah","prayer":"fajr","index":1}]},'
+        '"paging":{"mode":"url_template","url_template":"https://x.org/{year}/{month:02d}"}}'
+    )
+    assert lint_config(cfg) == []
+
+
+def test_lint_rejects_paging_on_single_day():
+    cfg = SourceConfig.from_json(
+        '{"shape":"html_table","grid":{"single_day":true,'
+        '"columns":[{"kind":"jamaah","prayer":"fajr","index":1}]},'
+        '"paging":{"mode":"url_template","url_template":"https://x.org/{year}/{month}"}}'
+    )
+    assert any("multi-day" in p for p in lint_config(cfg))
+
+
+def test_lint_rejects_paging_on_prayer_rows():
+    cfg = SourceConfig.from_json(
+        '{"shape":"html_table","grid":{"prayer_label_index":0,'
+        '"columns":[{"kind":"jamaah","index":1}]},'
+        '"paging":{"mode":"render_nav","nav":{"kind":"next","next_selector":".n"}}}'
+    )
+    assert any("multi-day" in p for p in lint_config(cfg))
+
+
+def test_lint_rejects_paging_on_rules_shape():
+    cfg = SourceConfig.from_json(
+        '{"shape":"rules","rules":{"rules":[{"prayer":"dhuhr","fixed":"13:30"}]},'
+        '"paging":{"mode":"url_template","url_template":"https://x.org/{year}/{month}"}}'
+    )
+    assert any("rules" in p for p in lint_config(cfg))
+
+
+def test_lint_rejects_month_less_url_template():
+    cfg = SourceConfig.from_json(
+        '{"shape":"html_table","grid":{"date":{"index":0},'
+        '"columns":[{"kind":"jamaah","prayer":"fajr","index":1}]},'
+        '"paging":{"mode":"url_template","url_template":"https://x.org/{year}"}}'
+    )
+    assert any("{month}" in p for p in lint_config(cfg))
+
+
+def test_lint_rejects_unformattable_url_template():
+    cfg = SourceConfig.from_json(
+        '{"shape":"html_table","grid":{"date":{"index":0},'
+        '"columns":[{"kind":"jamaah","prayer":"fajr","index":1}]},'
+        '"paging":{"mode":"url_template","url_template":"https://x.org/{month}/{day}"}}'
+    )
+    assert any("invalid" in p for p in lint_config(cfg))
