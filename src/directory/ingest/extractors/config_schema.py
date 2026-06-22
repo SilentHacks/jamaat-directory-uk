@@ -29,6 +29,13 @@ class GridSpec(BaseModel):
     table_selector: str | None = None  # html_table: CSS for the <table>
     row_selector: str | None = None  # html_repeated: CSS for each day item
     transpose: bool = False
+    # Prayer-rows orientation: a label column names the prayer on each body row,
+    # while the header names the kind (Begin/Iqamah). None → prayers are in the
+    # header (the default columns layout).
+    prayer_label_index: int | None = None
+    # Single-day table: no date axis (today's times, re-rendered daily). The engine
+    # stamps every extracted cell with the run date. None/absent → multi-day.
+    single_day: bool | None = None
     date: DateSpec | None = None
     columns: list[ColumnSpec] = Field(default_factory=list)
 

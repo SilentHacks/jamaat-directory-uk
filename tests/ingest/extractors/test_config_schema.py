@@ -70,6 +70,26 @@ def test_offset_column_with_base_prayer_parses():
     assert col.base_prayer == Prayer.MAGHRIB
 
 
+def test_vertical_single_day_grid_parses_and_defaults_are_absent():
+    # Prayer-rows layout: a label column names prayers, header names kinds, no
+    # date axis. prayer_label_index selects orientation; single_day stamps today.
+    cfg = SourceConfig.from_json(
+        '{"shape":"html_table","grid":{"prayer_label_index":0,"single_day":true,'
+        '"columns":[{"kind":"begin","index":1},{"kind":"jamaah","index":2}]}}'
+    )
+    assert cfg.grid.prayer_label_index == 0
+    assert cfg.grid.single_day is True
+    assert cfg.grid.columns[0].prayer is None  # prayer comes from the row label
+
+    # Defaults stay absent/false so existing stored configs are byte-identical.
+    stored = SourceConfig.from_json(
+        '{"shape":"html_table","grid":{"columns":['
+        '{"kind":"jamaah","prayer":"fajr","index":1}]}}'
+    ).to_json()
+    assert "prayer_label_index" not in stored
+    assert "single_day" not in stored
+
+
 def test_rules_shape_requires_rules_block():
     with pytest.raises(ValueError):
         SourceConfig.from_json('{"shape":"rules"}')
