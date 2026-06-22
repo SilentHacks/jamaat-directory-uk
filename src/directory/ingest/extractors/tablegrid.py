@@ -5,6 +5,8 @@ The detector and the engine must agree on column indices. A header that uses
 so both modules build their matrix here — one grid model, one source of truth.
 """
 
+from directory.ingest.normalize import parse_time
+
 
 def _int(value, default: int) -> int:
     try:
@@ -40,7 +42,8 @@ def grid_matrix(table) -> list[list[str]]:
 
 def header_depth(table) -> int:
     """Number of leading header rows: ``<thead>`` row count if present, else the
-    run of leading ``<tr>``s whose cells are all ``<th>``. Always at least 1."""
+    run of leading ``<tr>``s whose cells are all ``<th>``, else inferred from
+    content. Always at least 1."""
     thead = table.find("thead")
     if thead is not None:
         n = len(thead.find_all("tr"))
@@ -53,6 +56,21 @@ def header_depth(table) -> int:
             depth += 1
         else:
             break
+    return depth or _content_header_depth(table)
+
+
+def _content_header_depth(table) -> int:
+    """Infer the header of a table with no ``<thead>``/``<th>`` markup: a header
+    row carries no parseable clock time (a month caption, a prayer-name row, a
+    Begins/Jamā‘ah row), and the first timed row begins the body. One stray time
+    per row is enough to call it data, so a single-time-column vertical layout
+    keeps a depth of 1 rather than swallowing every row. Always at least 1."""
+    depth = 0
+    for tr in table.find_all("tr"):
+        cells = tr.find_all(["td", "th"])
+        if any(parse_time(c.get_text(" ", strip=True)) for c in cells):
+            break
+        depth += 1
     return depth or 1
 
 
