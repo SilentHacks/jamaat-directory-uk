@@ -22,7 +22,7 @@ class IframeWidgetDetector:
     columns: list[tuple[str, Prayer]]
     requires_js: bool = True
 
-    def detect(self, html: str, url: str) -> PlatformMatch | None:
+    def detect(self, html: str, url: str, *, fetcher=None) -> PlatformMatch | None:
         soup = BeautifulSoup(html, "lxml")
         for iframe in soup.find_all("iframe"):
             src = iframe.get("src", "")

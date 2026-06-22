@@ -19,6 +19,7 @@ from directory.ingest.fetch import USER_AGENT, fetch
 from directory.ingest.gates import run_gates
 from directory.ingest.materialize import materialize
 from directory.ingest.normalize import resolve_prayer
+from directory.ingest.pager import collect_documents, extract_documents
 from directory.ingest.runner import extract_source
 
 
@@ -210,24 +211,49 @@ _LANE_RANK = {"auto_accept": 2, "review": 1}
 # these, so they all count as non-specific when comparing pages.
 _GENERIC_PLATFORMS = frozenset({"generic_table", "dom_grid", "dom_records"})
 
+# Verification horizon for a paging (url_template) config: enough to span the
+# current and next month, so paging is exercised and the per-day variation across
+# a month boundary clears the constant-column gate, without fetching the whole
+# horizon at discovery time. The stored config keeps the full horizon for the
+# daily run.
+_VERIFY_HORIZON_DAYS = 35
 
-def _verify(html: str, match, *, today: date | None, horizon_days: int):
+
+def _verify(html: str, match, *, today: date | None, horizon_days: int, fetcher):
     """Run the engine + gates on a detected page without persisting; returns the
-    GateResult and a completeness score, or None when the page does not verify."""
+    GateResult and a completeness score, or None when the page does not verify.
+
+    A ``url_template`` paging config's timetable does not live on the handed page
+    (it is fetched per month from a data endpoint), so it is verified by walking
+    the current + next month through the same pager the daily run uses; the
+    self-match gate then runs against those fetched documents, not the handed page."""
     today = today or date.today()
     config = match.config
-    result = extract(html, config, year=today.year, month=today.month, today=today)
+    paging = config.paging
+    if paging is not None and paging.mode == "url_template":
+        docs, err = collect_documents(
+            config, match.url, today=today, horizon_days=_VERIFY_HORIZON_DAYS,
+            requires_js=match.requires_js, fetcher=fetcher,
+        )
+        if err or not docs:
+            return None
+        result = extract_documents(docs, config, today=today)
+        html_text = "\n".join(d.html for d in docs)
+    else:
+        result = extract(html, config, year=today.year, month=today.month, today=today)
+        html_text = html
     rows = materialize(
         result, config, horizon_start=today, horizon_end=today + timedelta(days=horizon_days)
     )
-    gate = run_gates(config, result, rows, html_text=html)
+    gate = run_gates(config, result, rows, html_text=html_text)
     if gate.lane not in _LANE_RANK:
         return None
     return gate, len(rows)
 
 
 def _best_verified(
-    pages: list[str], fetched_pages: dict[str, str], *, today: date | None, horizon_days: int
+    pages: list[str], fetched_pages: dict[str, str], *,
+    today: date | None, horizon_days: int, fetcher,
 ) -> _Verified | None:
     """Pick the best verified page: auto_accept ≻ review, platform-specific ≻
     generic, more-complete ≻ less, earlier page ≻ later."""
@@ -236,10 +262,12 @@ def _best_verified(
         html = fetched_pages.get(url)
         if not html:
             continue
-        match = platforms.detect_platform(html, url)
+        match = platforms.detect_platform(html, url, fetcher=fetcher)
         if match is None:
             continue
-        verified = _verify(html, match, today=today, horizon_days=horizon_days)
+        verified = _verify(
+            html, match, today=today, horizon_days=horizon_days, fetcher=fetcher
+        )
         if verified is None:
             continue
         gate, completeness = verified
@@ -388,7 +416,9 @@ def discover_mosque(
         fetched_pages[url] = res.html
 
     # Detect + verify on every fetched page; keep the best verified result.
-    best = _best_verified(pages, fetched_pages, today=today, horizon_days=horizon_days)
+    best = _best_verified(
+        pages, fetched_pages, today=today, horizon_days=horizon_days, fetcher=fetcher
+    )
 
     # Static miss: re-render the JS-shell pages and verify again, so a site whose
     # timetable is injected by JavaScript is never skipped as "static". Only the
@@ -404,7 +434,8 @@ def discover_mosque(
                 rendered_pages[url] = res.html
         if rendered_pages:
             rendered = _best_verified(
-                list(rendered_pages), rendered_pages, today=today, horizon_days=horizon_days
+                list(rendered_pages), rendered_pages,
+                today=today, horizon_days=horizon_days, fetcher=fetcher,
             )
             if rendered is not None:
                 best = rendered

@@ -38,7 +38,7 @@ def _body_prayer_columns(body: list[list[str]]) -> int:
 class DomGridDetector:
     name = "dom_grid"
 
-    def detect(self, html: str, url: str) -> PlatformMatch | None:
+    def detect(self, html: str, url: str, *, fetcher=None) -> PlatformMatch | None:
         matrix = dom_matrix(html)
         if matrix is None or len(matrix) < _MIN_ROWS:
             return None

@@ -55,7 +55,7 @@ def extract_mawaqit(payload: str, *, year: int, month: int | None) -> Extraction
 class MawaqitDetector:
     name = "mawaqit"
 
-    def detect(self, html: str, url: str) -> PlatformMatch | None:
+    def detect(self, html: str, url: str, *, fetcher=None) -> PlatformMatch | None:
         if "mawaqit.net" not in html and "confData" not in html:
             return None
         if _parse_confdata(html) is None:

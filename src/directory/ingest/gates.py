@@ -157,10 +157,16 @@ def run_gates(
     # materialized 18:00. Derived times (begin + offset) are computed, not present
     # verbatim, so they are exempt; their plausibility is still enforced by the
     # window/monotonic checks above and the begin they derive from is in the source.
+    # Fixed/rules Jumu‘ah sessions come from the config block (e.g. a day-widget
+    # authored separately from the daily grid's source), not from the scraped grid
+    # HTML, so they are exempt too — their plausibility is enforced by _jumuah_failure.
+    jumuah_from_config = config.jumuah is not None and config.jumuah.source in {"fixed", "rules"}
     if html_text:
         present = source_time_values(html_text)
         for o in occurrences:
             if o.derived:
+                continue
+            if o.prayer == "jumuah" and jumuah_from_config:
                 continue
             if o.jamaah_time not in present:
                 return GateResult("auto_reject", 0.0, [f"self-match failed for {o.jamaah_time}"])

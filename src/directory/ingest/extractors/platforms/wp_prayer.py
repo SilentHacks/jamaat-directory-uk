@@ -24,7 +24,7 @@ def _signature_table(soup: BeautifulSoup):
 class WpPrayerDetector:
     name = "wp_prayer"
 
-    def detect(self, html: str, url: str) -> PlatformMatch | None:
+    def detect(self, html: str, url: str, *, fetcher=None) -> PlatformMatch | None:
         soup = BeautifulSoup(html, "lxml")
         table = _signature_table(soup)
         if table is None:
