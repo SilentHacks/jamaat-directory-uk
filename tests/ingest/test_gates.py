@@ -40,6 +40,15 @@ def test_clean_full_day_with_jumuah_auto_accepts_no_flag():
     assert res.flags == []
 
 
+def test_single_date_full_day_auto_accepts():
+    # A single-day source materializes exactly one date. It must not be penalised:
+    # the constant-column heuristic only fires at >= 7 distinct dates.
+    occ = _day("2026-06-22", ["05:00", "13:30", "18:30", "21:30", "23:00"])
+    res = run_gates(GRID_CFG, ExtractionResult(), occ)
+    assert res.lane == "auto_accept"
+    assert res.flags == [JUMUAH_MISSING]
+
+
 def test_full_day_no_jumuah_auto_accepts_with_flag():
     occ = _day("2026-06-21", ["05:00", "13:30", "18:30", "21:30", "23:00"])
     occ += _day("2026-06-22", ["05:01", "13:30", "18:31", "21:31", "23:00"])
