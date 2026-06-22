@@ -4,8 +4,8 @@ from pathlib import Path
 import pytest
 
 from directory.ingest.extractors.dom_grid import dom_matrix
-from directory.ingest.extractors.platforms.dom_grid import DomGridDetector
 from directory.ingest.extractors.engine import extract
+from directory.ingest.extractors.platforms.dom_grid import DomGridDetector
 from directory.ingest.gates import run_gates
 from directory.ingest.materialize import materialize
 

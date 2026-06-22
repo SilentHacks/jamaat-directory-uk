@@ -137,15 +137,18 @@ def discover(
     root = settings.candidate_dir
     blocklist = load_blocklist(settings.blocklist_path)
     renderer = render_playwright if render_js else None
+    nav_renderer = render_playwright_nav if render_js else None
     if mosque_id is not None:
         outcomes = [
             discover_mosque(engine, mosque_id, candidate_root=root,
-                            horizon_days=horizon_days, blocklist=blocklist, renderer=renderer)
+                            horizon_days=horizon_days, blocklist=blocklist, renderer=renderer,
+                            nav_renderer=nav_renderer)
         ]
     else:
         outcomes = run_discovery(
             engine, candidate_root=root, horizon_days=horizon_days, blocklist=blocklist,
             concurrency=concurrency or settings.discover_concurrency, renderer=renderer,
+            nav_renderer=nav_renderer,
         )
     for o in outcomes:
         typer.echo(f"{o.mosque_id}: outcome={o.outcome} platform={o.platform}")

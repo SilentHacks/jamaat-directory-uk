@@ -344,6 +344,7 @@ def discover_mosque(
     horizon_days: int = 60,
     blocklist: frozenset[str] | None = None,
     renderer: Callable[[str], str] | None = None,
+    nav_renderer=None,
 ) -> DiscoverOutcome:
     with session_scope(engine) as s:
         mosque = repo.get_mosque(s, mosque_id)
@@ -425,7 +426,7 @@ def discover_mosque(
             )
         result = extract_source(
             engine, mosque_id, fetcher=fetcher, today=today, horizon_days=horizon_days,
-            renderer=renderer,
+            renderer=renderer, nav_renderer=nav_renderer,
         )
         return DiscoverOutcome(mosque_id, result.triage_status, match.platform)
 
@@ -459,6 +460,7 @@ def run_discovery(
     blocklist: frozenset[str] | None = None,
     concurrency: int = 16,
     renderer: Callable[[str], str] | None = None,
+    nav_renderer=None,
 ) -> list[DiscoverOutcome]:
     with session_scope(engine) as s:
         ids = [m.id for m in repo.mosques_for_discovery(s)]
@@ -474,6 +476,7 @@ def run_discovery(
             horizon_days=horizon_days,
             blocklist=blocklist,
             renderer=renderer,
+            nav_renderer=nav_renderer,
         )
 
     # ids come back id-ordered; pool.map preserves order → deterministic results.
