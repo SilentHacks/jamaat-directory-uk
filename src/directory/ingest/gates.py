@@ -43,8 +43,11 @@ def lint_config(config: SourceConfig) -> list[str]:
         if grid is None or not grid.columns:
             problems.append("grid shape has no columns")
         else:
+            # In prayer-rows layout the prayer comes from the label column, so a
+            # prayer-less jamaah column is expected, not a defect.
+            row_labelled = grid.prayer_label_index is not None
             for col in grid.columns:
-                if col.kind == "jamaah" and col.prayer is None:
+                if col.kind == "jamaah" and col.prayer is None and not row_labelled:
                     problems.append(f"jamaah column without prayer: {col!r}")
     return problems
 

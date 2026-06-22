@@ -173,3 +173,13 @@ def test_lint_flags_jamaah_column_without_prayer():
         '{"shape":"html_table","grid":{"columns":[{"kind":"jamaah","index":1}]}}'
     )
     assert lint_config(bad)
+
+
+def test_lint_allows_prayerless_columns_in_prayer_rows_layout():
+    # In a prayer-rows grid the prayer comes from the label column, so a jamaah
+    # column legitimately has prayer=None.
+    vertical = SourceConfig.from_json(
+        '{"shape":"html_table","grid":{"prayer_label_index":0,"single_day":true,'
+        '"columns":[{"kind":"begin","index":1},{"kind":"jamaah","index":2}]}}'
+    )
+    assert lint_config(vertical) == []
