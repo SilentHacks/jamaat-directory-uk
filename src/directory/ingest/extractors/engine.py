@@ -112,6 +112,20 @@ def _year_for_month(run_day: date, month: int) -> int:
     return run_day.year if month >= run_day.month else run_day.year + 1
 
 
+def _matrix_source(soup, grid) -> list[list[str]] | None:
+    """The cell matrix a config draws from: a div-grid rebuilt by ``dom_matrix``
+    when ``grid.dom_grid`` is set, else a real ``<table>`` flattened by
+    ``grid_matrix``. Returns None when the source element/grid is absent."""
+    if grid.dom_grid:
+        # Local import: dom_grid imports the layout helpers from the platforms
+        # package, which imports this engine — a top-level import would cycle.
+        from directory.ingest.extractors.dom_grid import dom_matrix
+
+        return dom_matrix(soup)
+    table = soup.select_one(grid.table_selector) if grid.table_selector else soup.find("table")
+    return grid_matrix(table) if table is not None else None
+
+
 def _extract_month_sections(soup, grid, run_day: date) -> ExtractionResult:
     """Annual page where day-only rows are scoped by a month caption — one table
     per month, or full-width month rows within one table. Each table's month is
@@ -178,13 +192,12 @@ def extract_html_table(
     if grid.month_sections:
         return _extract_month_sections(soup, grid, run_day)
 
-    table = soup.select_one(grid.table_selector) if grid.table_selector else soup.find("table")
-    if table is None:
+    # Shared grid model so body indices match the detector's column indices even
+    # when a row uses colspan/rowspan (or is rebuilt from a div-grid).
+    matrix = _matrix_source(soup, grid)
+    if matrix is None:
         return ExtractionResult(warnings=["table not found"])
 
-    # Shared grid model so body indices match the detector's column indices even
-    # when a row uses colspan/rowspan.
-    matrix = grid_matrix(table)
     if grid.transpose:
         matrix = [list(row) for row in zip(*matrix, strict=False)]
 
