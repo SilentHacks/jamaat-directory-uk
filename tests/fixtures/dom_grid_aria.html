@@ -1,0 +1,44 @@
+<!doctype html>
+<!-- A div-based "table" using ARIA grid roles instead of <table> markup: a
+     header row of prayer names + a date column, then one row per day. The
+     dom_grid adapter must synthesise the same matrix a real <table> would. -->
+<html>
+  <body>
+    <div class="widget">
+      <div role="table" aria-label="Prayer timetable">
+        <div role="row">
+          <div role="columnheader">Date</div>
+          <div role="columnheader">Fajr</div>
+          <div role="columnheader">Dhuhr</div>
+          <div role="columnheader">Asr</div>
+          <div role="columnheader">Maghrib</div>
+          <div role="columnheader">Isha</div>
+        </div>
+        <div role="row">
+          <div role="cell">1 Jun</div>
+          <div role="cell">03:15</div>
+          <div role="cell">13:30</div>
+          <div role="cell">18:45</div>
+          <div role="cell">21:30</div>
+          <div role="cell">23:00</div>
+        </div>
+        <div role="row">
+          <div role="cell">2 Jun</div>
+          <div role="cell">03:16</div>
+          <div role="cell">13:30</div>
+          <div role="cell">18:46</div>
+          <div role="cell">21:31</div>
+          <div role="cell">23:01</div>
+        </div>
+        <div role="row">
+          <div role="cell">3 Jun</div>
+          <div role="cell">03:17</div>
+          <div role="cell">13:30</div>
+          <div role="cell">18:47</div>
+          <div role="cell">21:32</div>
+          <div role="cell">23:02</div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

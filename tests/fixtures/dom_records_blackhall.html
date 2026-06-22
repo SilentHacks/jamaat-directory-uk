@@ -1,0 +1,56 @@
+<!doctype html>
+<!-- Faithful, trimmed reproduction of the Framer-rendered Blackhall Mosque
+     monthly-timetable: a flat, class-less <div> stream with no <table>, no ARIA
+     roles, no Begin/Jamaah headers. Each day: a weekday + date, then per prayer
+     a label and one or two times (jamaah listed before begin). Shuruq is a
+     non-prayer label leaving an orphan time; missing begins render as an em dash.
+     Page chrome (a hero "next prayer" widget with stray times) is included so the
+     container locator must localise to the timetable, not the chrome. -->
+<html>
+  <head><title>Blackhall Mosque — Monthly prayer times</title></head>
+  <body>
+    <header>
+      <nav><a href="/blackhall-mosque/monthly-timetable">Prayer Times</a></nav>
+      <div class="hero">
+        <div>Next prayer</div><div>Dhuhr</div><div>13:00</div>
+        <div>Jummah</div><div>13:30</div>
+      </div>
+    </header>
+    <main>
+      <div class="monthnav"><div>&lsaquo;</div><div>June 2026</div><div>&rsaquo;</div></div>
+      <div class="timetable">
+
+        <div class="day">
+          <div>Monday</div><div>1st Jun</div>
+          <div>Fajr</div><div>01:45</div><div>01:33</div>
+          <div>Shuruq</div><div>04:35</div><div>&mdash;</div>
+          <div>Dhuhr</div><div>14:00</div><div>13:16</div>
+          <div>Asr</div><div>19:45</div><div>18:54</div>
+          <div>Maghrib</div><div>21:52</div><div>&mdash;</div>
+          <div>Isha</div><div>22:50</div><div>22:46</div>
+        </div>
+
+        <div class="day">
+          <div>Tuesday</div><div>2nd Jun</div>
+          <div>Fajr</div><div>01:45</div><div>01:33</div>
+          <div>Shuruq</div><div>04:34</div><div>&mdash;</div>
+          <div>Dhuhr</div><div>14:00</div><div>13:16</div>
+          <div>Asr</div><div>19:45</div><div>18:55</div>
+          <div>Maghrib</div><div>21:53</div><div>&mdash;</div>
+          <div>Isha</div><div>22:50</div><div>22:47</div>
+        </div>
+
+        <div class="day">
+          <div>Wednesday</div><div>3rd Jun</div>
+          <div>Fajr</div><div>01:45</div><div>01:33</div>
+          <div>Shuruq</div><div>04:33</div><div>&mdash;</div>
+          <div>Dhuhr</div><div>14:00</div><div>13:16</div>
+          <div>Asr</div><div>19:45</div><div>18:56</div>
+          <div>Maghrib</div><div>21:54</div><div>&mdash;</div>
+          <div>Isha</div><div>22:50</div><div>22:48</div>
+        </div>
+
+      </div>
+    </main>
+  </body>
+</html>
