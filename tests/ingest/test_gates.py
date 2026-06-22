@@ -236,6 +236,26 @@ def test_lint_rejects_paging_on_prayer_rows():
     assert any("multi-day" in p for p in lint_config(cfg))
 
 
+def test_lint_rejects_paging_on_month_sections():
+    # A month_sections page already carries every month, so paging is contradictory.
+    cfg = SourceConfig.from_json(
+        '{"shape":"html_table","grid":{"month_sections":true,'
+        '"date":{"index":0,"format":"day_only"},'
+        '"columns":[{"kind":"jamaah","prayer":"fajr","index":1}]},'
+        '"paging":{"mode":"url_template","url_template":"https://x.org/{year}/{month}"}}'
+    )
+    assert any("month_sections" in p for p in lint_config(cfg))
+
+
+def test_lint_accepts_month_sections_without_paging():
+    cfg = SourceConfig.from_json(
+        '{"shape":"html_table","grid":{"month_sections":true,'
+        '"date":{"index":0,"format":"day_only"},'
+        '"columns":[{"kind":"jamaah","prayer":"fajr","index":1}]}}'
+    )
+    assert lint_config(cfg) == []
+
+
 def test_lint_rejects_paging_on_rules_shape():
     cfg = SourceConfig.from_json(
         '{"shape":"rules","rules":{"rules":[{"prayer":"dhuhr","fixed":"13:30"}]},'

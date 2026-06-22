@@ -70,6 +70,8 @@ def _lint_paging(config: SourceConfig) -> list[str]:
     grid = config.grid
     if grid is not None and (grid.single_day or grid.prayer_label_index is not None):
         problems.append("paging requires a multi-day date layout (not single_day/prayer-rows)")
+    if grid is not None and grid.month_sections:
+        problems.append("paging is redundant with month_sections (the page carries every month)")
     if paging.mode == "url_template":
         template = paging.url_template or ""
         if "{month" not in template:
