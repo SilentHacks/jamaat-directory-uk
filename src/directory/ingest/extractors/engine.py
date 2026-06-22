@@ -7,7 +7,13 @@ from bs4 import BeautifulSoup
 from directory.domain import DAILY_PRAYERS, Prayer
 from directory.ingest.extractors.config_schema import SourceConfig
 from directory.ingest.extractors.tablegrid import grid_matrix
-from directory.ingest.normalize import parse_date, parse_offset, parse_time, resolve_prayer
+from directory.ingest.normalize import (
+    month_from_text,
+    parse_date,
+    parse_offset,
+    parse_time,
+    resolve_prayer,
+)
 
 
 @dataclass
@@ -84,6 +90,78 @@ def _extract_vertical(matrix, grid, run_day: date) -> ExtractionResult:
     return result
 
 
+def _emit_row(
+    texts, grid, date_idx, *, year: int, month: int | None, result: ExtractionResult
+) -> None:
+    """Emit cells for one body row of a column layout: resolve the date from
+    ``date_idx`` against ``(year, month)``, then read each configured prayer
+    column. A row whose date cell does not parse (a header or month-caption row)
+    yields nothing. Shared by the default multi-day path and month-section path."""
+    if date_idx is None or date_idx >= len(texts):
+        return
+    d = parse_date(texts[date_idx], year=year, month=month)
+    if d is None:
+        return
+    for col in grid.columns:
+        if col.index is None or col.index >= len(texts) or col.prayer is None:
+            continue
+        cell = _cell_from_text(texts[col.index], col, col.prayer, d)
+        if cell is not None:
+            result.cells.append(cell)
+
+
+def _year_for_month(run_day: date, month: int) -> int:
+    """The year a perpetual annual timetable's month belongs to relative to the
+    run day: the current year for the run month onward, next year for a month
+    already past (it wraps). Over-produced far-future days are filtered by the
+    horizon at materialize."""
+    return run_day.year if month >= run_day.month else run_day.year + 1
+
+
+def _row_month(texts: list[str]) -> int | None:
+    """The month a full-width section row names (every non-empty cell is the same
+    month label, e.g. a colspan ``February`` row), else None."""
+    distinct = {t for t in texts if t.strip()}
+    if len(distinct) != 1:
+        return None
+    return month_from_text(next(iter(distinct)))
+
+
+def _caption_month(table) -> int | None:
+    cap = table.find("caption")
+    return month_from_text(cap.get_text(" ", strip=True)) if cap else None
+
+
+def _extract_month_sections(soup, grid, run_day: date) -> ExtractionResult:
+    """Annual page where day-only rows are scoped by a month caption — one table
+    per month, or full-width month rows within one table. Each table's month is
+    seeded from its ``<caption>`` and updated by any full-width month row; data
+    rows beneath a month are dated (that month's year via ``_year_for_month``).
+    Rows before any month caption are skipped rather than guessed."""
+    result = ExtractionResult()
+    date_idx = grid.date.index if grid.date else None
+    tables = soup.select(grid.table_selector) if grid.table_selector else soup.find_all("table")
+    for table in tables:
+        matrix = grid_matrix(table)
+        if grid.transpose:
+            matrix = [list(row) for row in zip(*matrix, strict=False)]
+        current_month = _caption_month(table)
+        for texts in matrix:
+            result.texts.extend(texts)
+            row_month = _row_month(texts)
+            if row_month is not None:
+                current_month = row_month
+                continue
+            if current_month is None:
+                continue
+            _emit_row(
+                texts, grid, date_idx,
+                year=_year_for_month(run_day, current_month), month=current_month,
+                result=result,
+            )
+    return result
+
+
 def _extract_single_day(matrix, grid, run_day: date) -> ExtractionResult:
     """Horizontal layout with no date axis: prayers are in the header, the first
     body row that yields times is today's snapshot. All cells are dated run_day."""
@@ -113,6 +191,13 @@ def extract_html_table(
 ) -> ExtractionResult:
     grid = config.grid
     soup = BeautifulSoup(html, "lxml")
+    run_day = today or date.today()
+
+    # Month-section layout spans many tables / in-table sections, so it selects
+    # its own tables rather than a single one.
+    if grid.month_sections:
+        return _extract_month_sections(soup, grid, run_day)
+
     table = soup.select_one(grid.table_selector) if grid.table_selector else soup.find("table")
     if table is None:
         return ExtractionResult(warnings=["table not found"])
@@ -123,7 +208,6 @@ def extract_html_table(
     if grid.transpose:
         matrix = [list(row) for row in zip(*matrix, strict=False)]
 
-    run_day = today or date.today()
     if grid.prayer_label_index is not None:
         return _extract_vertical(matrix, grid, run_day)
     if grid.single_day:
@@ -133,17 +217,7 @@ def extract_html_table(
     date_idx = grid.date.index if grid.date else None
     for texts in matrix:
         result.texts.extend(texts)
-        if date_idx is None or date_idx >= len(texts):
-            continue
-        d = parse_date(texts[date_idx], year=year, month=month)
-        if d is None:
-            continue
-        for col in grid.columns:
-            if col.index is None or col.index >= len(texts) or col.prayer is None:
-                continue
-            cell = _cell_from_text(texts[col.index], col, col.prayer, d)
-            if cell is not None:
-                result.cells.append(cell)
+        _emit_row(texts, grid, date_idx, year=year, month=month, result=result)
     return result
 
 
