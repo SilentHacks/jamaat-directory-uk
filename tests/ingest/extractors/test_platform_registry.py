@@ -6,7 +6,7 @@ def test_detect_platform_returns_first_match():
     class Yes:
         name = "yes"
 
-        def detect(self, html, url):
+        def detect(self, html, url, *, fetcher=None):
             return base.PlatformMatch(
                 platform="yes",
                 url=url,
@@ -17,7 +17,7 @@ def test_detect_platform_returns_first_match():
     class No:
         name = "no"
 
-        def detect(self, html, url):
+        def detect(self, html, url, *, fetcher=None):
             return None
 
     registry = [No(), Yes()]
@@ -30,7 +30,7 @@ def test_detect_platform_none_when_no_match():
     class No:
         name = "no"
 
-        def detect(self, html, url):
+        def detect(self, html, url, *, fetcher=None):
             return None
 
     assert base.detect_platform("<html></html>", "https://m.example/", registry=[No()]) is None
