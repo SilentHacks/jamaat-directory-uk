@@ -206,6 +206,9 @@ class _Verified:
 
 
 _LANE_RANK = {"auto_accept": 2, "review": 1}
+# Layout-agnostic catch-alls: a real platform / <table> match should outrank
+# these, so they all count as non-specific when comparing pages.
+_GENERIC_PLATFORMS = frozenset({"generic_table", "dom_grid", "dom_records"})
 
 
 def _verify(html: str, match, *, today: date | None, horizon_days: int):
@@ -240,7 +243,7 @@ def _best_verified(
         if verified is None:
             continue
         gate, completeness = verified
-        is_specific = 0 if match.platform == "generic_table" else 1
+        is_specific = 0 if match.platform in _GENERIC_PLATFORMS else 1
         rank = (_LANE_RANK[gate.lane], is_specific, completeness, -idx)
         if best is None or rank > best.rank:
             best = _Verified(match=match, rank=rank)
