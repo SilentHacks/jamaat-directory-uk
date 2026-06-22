@@ -11,9 +11,12 @@ from directory.ingest.extractors.config_schema import (
 )
 from directory.ingest.extractors.platforms.base import PlatformMatch
 from directory.ingest.extractors.tablegrid import (
+    caption_month,
     combined_header,
+    content_header_depth,
     grid_matrix,
     header_depth,
+    row_month,
 )
 from directory.ingest.normalize import (
     normalize_token,
@@ -170,11 +173,72 @@ def _detect_vertical(
     return label_idx, columns
 
 
+def _month_sections(soup) -> list[tuple[int, list[str], list[list[str]]]]:
+    """Split the page into month sections — one per month-captioned table and per
+    full-width month row within a table. Each is ``(month, header, body)`` with
+    the header rows collapsed; the month-caption row itself is consumed as the
+    delimiter, so headers stay clean. Sections without a header are skipped."""
+    sections: list[tuple[int, list[str], list[list[str]]]] = []
+    for table in soup.find_all("table"):
+        grid = grid_matrix(table)
+        current_month = caption_month(table)
+        run: list[list[str]] = []
+
+        def _flush(month: int | None, rows: list[list[str]]) -> None:
+            if month is None or not rows:
+                return
+            depth = content_header_depth(rows)
+            if depth == 0 or depth >= len(rows):
+                return  # no header, or no body rows
+            sections.append((month, combined_header(rows, depth), rows[depth:]))
+
+        for grid_row in grid:
+            rm = row_month(grid_row)
+            if rm is not None:
+                _flush(current_month, run)
+                current_month, run = rm, []
+                continue
+            run.append(grid_row)
+        _flush(current_month, run)
+    return sections
+
+
+def _month_section_layout(soup) -> SourceConfig | None:
+    """Annual page whose day-only rows are scoped by a month caption (separate
+    per-month tables, or full-width month rows in one table). Fires only when ≥2
+    distinct months are present, so an ordinary single-month titled table is left
+    to the per-table path. Columns/date come from the first resolvable section."""
+    sections = _month_sections(soup)
+    if len({month for month, _, _ in sections}) < 2:
+        return None
+    for _month, header, body in sections:
+        columns = _detect_columns(header, body)
+        if len(columns) < _MIN_PRAYER_COLS:
+            continue
+        date_idx = _detect_date_index(header, body, {c.index for c in columns})
+        if date_idx is None:
+            continue
+        return SourceConfig(
+            shape="html_table",
+            grid=GridSpec(
+                month_sections=True,
+                date=DateSpec(index=date_idx, format="day_only"),
+                columns=columns,
+            ),
+        )
+    return None
+
+
 class GenericTableDetector:
     name = "generic_table"
 
     def detect(self, html: str, url: str) -> PlatformMatch | None:
         soup = BeautifulSoup(html, "lxml")
+        # Page-level shape first: an annual page of month-captioned sections spans
+        # many tables, so it cannot be found by the per-table loop below.
+        config = _month_section_layout(soup)
+        if config is not None:
+            return PlatformMatch(platform=self.name, url=url, requires_js=False, config=config)
         for table in soup.find_all("table"):
             grid = grid_matrix(table)
             depth = header_depth(table)

@@ -5,7 +5,7 @@ The detector and the engine must agree on column indices. A header that uses
 so both modules build their matrix here — one grid model, one source of truth.
 """
 
-from directory.ingest.normalize import parse_time
+from directory.ingest.normalize import month_from_text, parse_time
 
 
 def _int(value, default: int) -> int:
@@ -65,13 +65,38 @@ def _content_header_depth(table) -> int:
     Begins/Jamā‘ah row), and the first timed row begins the body. One stray time
     per row is enough to call it data, so a single-time-column vertical layout
     keeps a depth of 1 rather than swallowing every row. Always at least 1."""
+    rows = [
+        [c.get_text(" ", strip=True) for c in tr.find_all(["td", "th"])]
+        for tr in table.find_all("tr")
+    ]
+    return content_header_depth(rows) or 1
+
+
+def content_header_depth(rows: list[list[str]]) -> int:
+    """The leading run of time-less rows in a text matrix — the header rows. May
+    be 0 when the first row already holds a clock time (no header). Used to split
+    a month section's rows into header + body."""
     depth = 0
-    for tr in table.find_all("tr"):
-        cells = tr.find_all(["td", "th"])
-        if any(parse_time(c.get_text(" ", strip=True)) for c in cells):
+    for row in rows:
+        if any(parse_time(c) for c in row):
             break
         depth += 1
-    return depth or 1
+    return depth
+
+
+def caption_month(table) -> int | None:
+    """The month a table's ``<caption>`` element names, if any."""
+    cap = table.find("caption")
+    return month_from_text(cap.get_text(" ", strip=True)) if cap else None
+
+
+def row_month(row: list[str]) -> int | None:
+    """The month a full-width section row names — every non-empty cell is the same
+    month label (e.g. a colspan ``February`` row) — else None."""
+    distinct = {t for t in row if t.strip()}
+    if len(distinct) != 1:
+        return None
+    return month_from_text(next(iter(distinct)))
 
 
 def combined_header(grid: list[list[str]], depth: int) -> list[str]:

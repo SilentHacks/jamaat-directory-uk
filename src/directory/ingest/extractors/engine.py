@@ -6,14 +6,8 @@ from bs4 import BeautifulSoup
 
 from directory.domain import DAILY_PRAYERS, Prayer
 from directory.ingest.extractors.config_schema import SourceConfig
-from directory.ingest.extractors.tablegrid import grid_matrix
-from directory.ingest.normalize import (
-    month_from_text,
-    parse_date,
-    parse_offset,
-    parse_time,
-    resolve_prayer,
-)
+from directory.ingest.extractors.tablegrid import caption_month, grid_matrix, row_month
+from directory.ingest.normalize import parse_date, parse_offset, parse_time, resolve_prayer
 
 
 @dataclass
@@ -118,20 +112,6 @@ def _year_for_month(run_day: date, month: int) -> int:
     return run_day.year if month >= run_day.month else run_day.year + 1
 
 
-def _row_month(texts: list[str]) -> int | None:
-    """The month a full-width section row names (every non-empty cell is the same
-    month label, e.g. a colspan ``February`` row), else None."""
-    distinct = {t for t in texts if t.strip()}
-    if len(distinct) != 1:
-        return None
-    return month_from_text(next(iter(distinct)))
-
-
-def _caption_month(table) -> int | None:
-    cap = table.find("caption")
-    return month_from_text(cap.get_text(" ", strip=True)) if cap else None
-
-
 def _extract_month_sections(soup, grid, run_day: date) -> ExtractionResult:
     """Annual page where day-only rows are scoped by a month caption — one table
     per month, or full-width month rows within one table. Each table's month is
@@ -145,12 +125,12 @@ def _extract_month_sections(soup, grid, run_day: date) -> ExtractionResult:
         matrix = grid_matrix(table)
         if grid.transpose:
             matrix = [list(row) for row in zip(*matrix, strict=False)]
-        current_month = _caption_month(table)
+        current_month = caption_month(table)
         for texts in matrix:
             result.texts.extend(texts)
-            row_month = _row_month(texts)
-            if row_month is not None:
-                current_month = row_month
+            section_month = row_month(texts)
+            if section_month is not None:
+                current_month = section_month
                 continue
             if current_month is None:
                 continue
