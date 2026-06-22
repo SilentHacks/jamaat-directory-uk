@@ -1,6 +1,5 @@
 from datetime import date
 
-from directory.domain import Prayer
 from directory.ingest.extractors.engine import extract
 from directory.ingest.extractors.platforms.generic_table import GenericTableDetector
 from directory.ingest.gates import run_gates
