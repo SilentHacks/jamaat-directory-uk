@@ -13,7 +13,9 @@ Return ONE JSON object and nothing else (no prose, no code fences):
     "grid": {{                       // required for html_table / html_repeated
       "table_selector": "<css>",     // html_table: CSS for the <table> (optional)
       "row_selector": "<css>",       // html_repeated: CSS for each day item
-      "transpose": false,            // true if prayers are rows and days are columns
+      "transpose": false,            // true if prayers are ROWS and DATES are columns
+      "prayer_label_index": null,    // prayer-rows layout: column holding the prayer name
+      "single_day": false,           // true if the table shows only today (no date column)
       "date": {{"index": 0, "selector": "<css>", "format": null}},
       "columns": [
         {{"kind": "jamaah", "prayer": "fajr", "index": 1,
@@ -34,6 +36,11 @@ Rules:
 - "prayer" is exactly one of: {_PRAYERS}.
 - html_table columns use a 0-based "index"; html_repeated columns use a CSS "selector".
 - "kind" is "jamaah" (congregation / iqamah) or "begin" (adhan / start time).
+- If prayers run DOWN the rows (a label column) and the header names the kind
+  (Begin/Iqamah), set "prayer_label_index" to that label column and leave each
+  column's "prayer" null — it is taken from the row label.
+- If the table shows only today's times with no date column, set "single_day": true
+  (omit "date"); it is re-read every day.
 - Copy the raw column header text into "header_seen" for every column.
 - If a jamaah cell is a relative offset like "+5" / "+10 min" (minutes after a
   begin time), set "value_kind": "offset" on that column. The offset resolves
@@ -93,6 +100,9 @@ Rules:
 - "kind" is "jamaah" (congregation / iqamah) or "begin" (adhan / start time).
 - A jamaah column of relative offsets ("+5") uses "value_kind": "offset" and
   resolves against "base_prayer"'s begin time (default: its own prayer).
+- If prayers run down the rows, set "prayer_label_index" to the label column and
+  leave columns' "prayer" null. If the table shows only today (no date column),
+  set "single_day": true and omit "date".
 - Times are 24-hour "HH:MM".
 - If you cannot find a timetable within your budget, output exactly {{}}.
 """

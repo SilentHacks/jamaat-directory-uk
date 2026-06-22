@@ -40,6 +40,12 @@ def test_prompt_documents_relative_offset_columns():
     assert "base_prayer" in p
 
 
+def test_prompt_documents_vertical_and_single_day_layouts():
+    p = build_author_prompt(_bundle())
+    assert "prayer_label_index" in p
+    assert "single_day" in p
+
+
 def test_prompt_truncates_regions_and_caps_candidate_count():
     big = Candidate(url="https://m1.example/big", score=5.0, region_html="x" * 9000, text="t")
     bundle = CandidateBundle("m1", "https://m1.example/", [big, big, big, big])
