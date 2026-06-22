@@ -59,3 +59,29 @@ def test_no_match_without_fetcher():
 def test_no_match_on_unrelated_page():
     html = "<html><body><p>Welcome to our mosque</p></body></html>"
     assert WpDptDetector().detect(html, "https://m.example/", fetcher=_fetcher) is None
+
+
+def test_no_match_when_endpoint_unavailable():
+    # A nonce-gated / non-GET endpoint returns no usable month table → defer to the
+    # next deterministic tier (never author an empty config).
+    def dead(url, **kw):
+        return FetchResult(url, 403, "", None)
+
+    assert WpDptDetector().detect(WIDGET, "https://m.example/", fetcher=dead) is None
+
+
+def test_month_rows_dated_by_the_horizon_year_not_the_printed_year():
+    # The pager supplies each month's (year, month) from the horizon; the engine
+    # dates rows by that year, ignoring whatever year the plugin printed in the
+    # cell. So a January page fetched in late December is dated next year — and a
+    # plugin that misprints the year cannot mis-date the data.
+    from datetime import date
+
+    from directory.ingest.extractors.engine import extract
+
+    match = WpDptDetector().detect(WIDGET, "https://m.example/", fetcher=_fetcher)
+    # JULY cells read "… July 2026"; extracting under the next-year horizon dates
+    # them 2027, proving the horizon year drives the date, not the printed 2026.
+    result = extract(JULY, match.config, year=2027, month=7, today=date(2027, 1, 1))
+    assert result.cells, "expected cells from the July month table"
+    assert {c.date.year for c in result.cells} == {2027}
