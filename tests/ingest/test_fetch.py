@@ -4,7 +4,12 @@ import types
 import httpx
 
 from directory.ingest.extractors.config_schema import NavSpec
-from directory.ingest.fetch import fetch, render_playwright_nav
+from directory.ingest.fetch import (
+    _settle_for_timetable,
+    _timetable_ready,
+    fetch,
+    render_playwright_nav,
+)
 
 
 def _client(handler) -> httpx.Client:
@@ -70,6 +75,65 @@ def test_renderer_failure_is_captured_not_raised():
     assert res.error is not None
     assert "render failed" in res.error
     assert res.html is None
+
+
+# ---------------------------------------------------------------------------
+# Renderer hardening: wait for a JS timetable to hydrate before snapshotting.
+# ---------------------------------------------------------------------------
+def test_timetable_ready_needs_several_clock_times():
+    assert _timetable_ready("<table>05:00 13:30 18:00 21:00 22:30</table>")
+    # dot-separated clocks count too (e.g. "04.20")
+    assert _timetable_ready("04.20 13.05 16.52 20.08 21.22")
+    # a bare shell with one stray time is not a populated timetable
+    assert not _timetable_ready("<div>Next prayer at 13:30</div>")
+    assert not _timetable_ready("<div>spinner</div>")
+
+
+class _PollPage:
+    """A page that serves a JS shell until ``ready_after`` content reads, then the
+    populated timetable. wait_for_timeout advances a fake monotonic clock so the
+    poll loop is deterministic without real sleeps."""
+
+    FULL = "<table>05:00 13:30 18:00 21:00 22:30</table>"
+    SHELL = "<div>spinner</div>"
+
+    def __init__(self, ready_after: int):
+        self.ready_after = ready_after
+        self.reads = 0
+        self.waits = 0
+        self.t = 0.0
+
+    def content(self) -> str:
+        read = self.reads
+        self.reads += 1
+        return self.FULL if read >= self.ready_after else self.SHELL
+
+    def wait_for_timeout(self, ms: int) -> None:
+        self.waits += 1
+        self.t += ms / 1000
+
+    def clock(self) -> float:
+        return self.t
+
+
+def test_settle_waits_for_timetable_to_hydrate():
+    page = _PollPage(ready_after=3)
+    html = _settle_for_timetable(page, 15000, poll_ms=400, clock=page.clock)
+    assert html == _PollPage.FULL
+    assert page.waits >= 1  # it polled rather than snapshotting the shell
+
+
+def test_settle_returns_immediately_when_already_populated():
+    page = _PollPage(ready_after=0)
+    html = _settle_for_timetable(page, 15000, poll_ms=400, clock=page.clock)
+    assert html == _PollPage.FULL
+    assert page.waits == 0  # no waiting when the timetable is already there
+
+
+def test_settle_gives_up_at_deadline_without_hanging():
+    page = _PollPage(ready_after=10_000)  # never hydrates
+    html = _settle_for_timetable(page, 1000, poll_ms=400, clock=page.clock)
+    assert html == _PollPage.SHELL  # best-effort: returns the shell, never hangs
 
 
 # ---------------------------------------------------------------------------

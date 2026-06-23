@@ -1,4 +1,6 @@
 import hashlib
+import re
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -7,6 +9,11 @@ import httpx
 from directory.ingest.extractors.config_schema import NavSpec
 
 USER_AGENT = "jamaat-directory-uk/0.1 (+https://github.com/SilentHacks/jamaat-directory-uk)"
+
+# A populated timetable shows several clock times; one stray time (a "next prayer"
+# countdown) does not. Matches both "13:30" and dot-separated "13.30".
+_CLOCK_RE = re.compile(r"\b\d{1,2}[:.]\d{2}\b")
+_RENDER_MIN_CLOCKS = 5
 
 
 @dataclass
@@ -89,7 +96,35 @@ def _await_step(page, nav: NavSpec, timeout_ms: int) -> None:
         page.wait_for_timeout(nav.settle_ms)
 
 
-def render_playwright(url: str, *, timeout_ms: int = 15000) -> str:
+def _timetable_ready(html: str, *, min_clocks: int = _RENDER_MIN_CLOCKS) -> bool:
+    """A rendered page carries a populated timetable once it shows several clock
+    times — the signal that a JS-injected table (Google Sheets, prayer widgets)
+    has hydrated rather than being a bare shell."""
+    return len(_CLOCK_RE.findall(html)) >= min_clocks
+
+
+def _settle_for_timetable(
+    page, settle_ms: int, *, poll_ms: int = 400, clock: Callable[[], float] = time.monotonic
+) -> str:
+    """Poll the live DOM until it shows a timetable's worth of clock times, then
+    return its HTML. JS timetables routinely populate *after* networkidle, so
+    snapshotting immediately races the hydration — a race that loses far more
+    often under concurrent renders (CPU contention) and yields a shell with no
+    rows. Best-effort: a page that genuinely has few times just returns its
+    content once the deadline passes, never raising."""
+    html = page.content()
+    if _timetable_ready(html):
+        return html
+    deadline = clock() + settle_ms / 1000
+    while clock() < deadline:
+        page.wait_for_timeout(poll_ms)
+        html = page.content()
+        if _timetable_ready(html):
+            break
+    return html
+
+
+def render_playwright(url: str, *, timeout_ms: int = 15000, settle_ms: int = 8000) -> str:
     # lazy: never imported by default
     from playwright.sync_api import sync_playwright
 
@@ -97,10 +132,11 @@ def render_playwright(url: str, *, timeout_ms: int = 15000) -> str:
         browser = p.chromium.launch()
         try:
             page = browser.new_page()
-            # Best-effort settle so JS-injected tables (e.g. Google Sheets)
-            # populate, but never fail when the page never reaches network idle.
+            # Settle on the network, then wait for the timetable itself to hydrate
+            # before snapshotting — domcontentloaded/networkidle alone races the
+            # JS that injects the prayer rows.
             _goto_and_settle(page, url, timeout_ms)
-            return page.content()
+            return _settle_for_timetable(page, settle_ms)
         finally:
             browser.close()
 
