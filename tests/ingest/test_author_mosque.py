@@ -119,6 +119,46 @@ def test_no_bundle_marks_no_candidate_without_calling_harness(engine, tmp_path):
         assert repo.get_source(s, "m1").triage_status == "no_timetable"
 
 
+IMAGE_OUTPUT = json.dumps(
+    {
+        "url": "https://m1.example/timetable",
+        "config": {
+            "shape": "image",
+            "media": {"url": "https://m1.example/june.jpg"},
+            "jumuah": {
+                "source": "fixed",
+                "sessions": [
+                    {"label": "Khutbah", "time": "13:20"},
+                    {"label": "Salah", "time": "13:40"},
+                ],
+            },
+        },
+    }
+)
+
+
+def test_image_timetable_defers_without_escalating(engine, tmp_path):
+    _candidate_mosque(engine)
+    _bundle().save(tmp_path)
+    harness = FakeHarness(IMAGE_OUTPUT)
+
+    out = author_mosque(engine, "m1", harness=harness, candidate_root=tmp_path,
+                        models=("cheap", "strong"), today=date(2026, 6, 1), horizon_days=14,
+                        fetcher=_fetcher)
+
+    assert out.outcome == "deferred_media"
+    assert out.model == "cheap"          # classified on the cheap model
+    assert harness.calls == ["cheap"]    # terminal: no escalation to strong
+    with session_scope(engine) as s:
+        src = repo.get_source(s, "m1")
+        assert src.triage_status == "deferred_media"
+        assert src.shape == "image"
+        assert "june.jpg" in src.config   # media URL persisted in the config
+        # Jumu'ah captured even though daily extraction is deferred
+        occ = s.query(Occurrence).all()
+        assert occ and all(o.prayer == "jumuah" for o in occ)
+
+
 def test_skips_non_candidate_source(engine, tmp_path):
     with session_scope(engine) as s:
         s.add(Mosque(id="m1", name="M1", lat=52.0, lng=-1.0))

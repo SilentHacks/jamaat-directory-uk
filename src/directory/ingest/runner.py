@@ -5,8 +5,9 @@ from datetime import UTC, date, datetime, timedelta
 from directory import repository as repo
 from directory.db import session_scope
 from directory.ingest.extractors.config_schema import SourceConfig
+from directory.ingest.extractors.engine import ExtractionResult
 from directory.ingest.fetch import fetch, html_hash
-from directory.ingest.gates import run_gates
+from directory.ingest.gates import jumuah_failure, run_gates
 from directory.ingest.materialize import materialize
 from directory.ingest.pager import (
     collect_documents,
@@ -15,6 +16,10 @@ from directory.ingest.pager import (
 )
 
 PARTIAL_HORIZON = "partial_horizon"
+DEFERRED_MEDIA = "deferred_media"
+# Shapes whose timetable is an image/PDF the engine does not parse: classified
+# and recorded here, daily extraction deferred to a later phase.
+_MEDIA_SHAPES = {"image", "pdf"}
 
 
 @dataclass
@@ -34,6 +39,34 @@ def _reauthor(engine, source_id, error) -> ExtractOutcome:
         )
         repo.record_extractor_run(s, source_id, ok=False, rows_written=0, error=error)
     return ExtractOutcome(source_id, False, 0, "auto_reject", "needs_reauthor", error)
+
+
+def _defer_media(
+    engine, source_id: str, mosque_id: str, config: SourceConfig, *,
+    today: date, horizon_days: int,
+) -> ExtractOutcome:
+    """Terminal landing for an image/PDF timetable: record the classification and
+    capture any structured Jumu'ah, without fetching or parsing the media. Rerun
+    daily so the fixed Jumu'ah rolls forward with the horizon."""
+    horizon_end = today + timedelta(days=horizon_days)
+    rows = materialize(
+        ExtractionResult(), config, horizon_start=today, horizon_end=horizon_end
+    )
+    # A Jumu'ah block the model read off the page must still be plausible.
+    jfail = jumuah_failure(rows)
+    if jfail is not None:
+        return _reauthor(engine, source_id, f"deferred media jumuah: {jfail}")
+
+    now = datetime.now(tz=UTC).isoformat(timespec="seconds")
+    reason = f"timetable is {config.shape}; daily extraction deferred ({config.media.url})"
+    with session_scope(engine, write=True) as s:
+        n = repo.replace_source_occurrences(s, source_id, mosque_id, rows)
+        repo.set_source_state(
+            s, source_id, triage_status=DEFERRED_MEDIA, confidence=0.0,
+            review_reason=reason, last_status=DEFERRED_MEDIA, last_fetched_at=now,
+        )
+        repo.record_extractor_run(s, source_id, ok=True, rows_written=n)
+    return ExtractOutcome(source_id, True, n, "deferred", DEFERRED_MEDIA)
 
 
 def extract_source(
@@ -63,6 +96,13 @@ def extract_source(
         config = SourceConfig.from_json(config_raw)
     except ValueError as exc:
         return _reauthor(engine, source_id, f"config parse: {exc}")
+
+    # image/PDF timetables are not parsed here: record the classification + any
+    # Jumu'ah and stop, without spending a fetch on a page we won't scrape.
+    if config.shape in _MEDIA_SHAPES:
+        return _defer_media(
+            engine, source_id, mosque_id, config, today=today, horizon_days=horizon_days
+        )
 
     docs, err = collect_documents(
         config, url, today=today, horizon_days=horizon_days, requires_js=requires_js,

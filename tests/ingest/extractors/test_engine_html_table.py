@@ -41,6 +41,49 @@ def test_extracts_cells_with_resolved_dates_and_times():
     assert len({c.date for c in result.cells}) == 2
 
 
+# A real-world layout (sky-prayer-timetable plugin): the date column is a
+# "weekday + day" label and each prayer cell packs begin + iqamah, split by a
+# per-column ordinal time_index.
+PACKED_HTML = """
+<table class="t">
+  <tr><th>Date</th><th>Fajr</th><th>Dhuhr</th></tr>
+  <tr><td>Mon 1</td><td>2:55 AM Iqm 3:45 AM</td><td>1:06 PM Iqm 1:30 PM</td></tr>
+  <tr><td>Tue 2</td><td>2:53 AM Iqm 3:45 AM</td><td>1:06 PM Iqm 1:31 PM</td></tr>
+</table>
+"""
+
+PACKED_CONFIG = SourceConfig.from_json(
+    """
+    {
+      "shape": "html_table",
+      "grid": {
+        "table_selector": "table.t",
+        "date": {"index": 0},
+        "columns": [
+          {"kind": "begin",  "prayer": "fajr",  "index": 1, "time_index": 0},
+          {"kind": "jamaah", "prayer": "fajr",  "index": 1, "time_index": 1},
+          {"kind": "begin",  "prayer": "dhuhr", "index": 2, "time_index": 0},
+          {"kind": "jamaah", "prayer": "dhuhr", "index": 2, "time_index": 1}
+        ]
+      }
+    }
+    """
+)
+
+
+def test_time_index_splits_a_packed_begin_iqamah_cell():
+    result = extract_html_table(PACKED_HTML, PACKED_CONFIG, year=2026, month=6)
+    by = {(c.date, c.prayer, c.kind): c.time for c in result.cells}
+    # Fajr begin/iqamah come from the same cell, picked by ordinal position.
+    assert by[(date(2026, 6, 1), Prayer.FAJR, "begin")] == "02:55"
+    assert by[(date(2026, 6, 1), Prayer.FAJR, "jamaah")] == "03:45"
+    # Dhuhr "1:06 PM"/"1:30 PM" resolve via the explicit pm markers.
+    assert by[(date(2026, 6, 1), Prayer.DHUHR, "begin")] == "13:06"
+    assert by[(date(2026, 6, 1), Prayer.DHUHR, "jamaah")] == "13:30"
+    # The weekday+day date column resolved both rows.
+    assert {c.date for c in result.cells} == {date(2026, 6, 1), date(2026, 6, 2)}
+
+
 def test_missing_table_yields_warning_not_crash():
     result = extract_html_table("<p>no table</p>", CONFIG, year=2026)
     assert result.cells == []

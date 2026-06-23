@@ -14,6 +14,9 @@ class ColumnSpec(BaseModel):
     kind: Literal["jamaah", "begin"]
     prayer: Prayer | None = None  # None → prayer comes from a row label
     index: int | None = None  # html_table: 0-based column index (post-transpose)
+    # html_table: when one cell packs several times (e.g. begin + iqamah), the
+    # 0-based position of this column's time within that cell. None → first time.
+    time_index: int | None = None
     selector: str | None = None  # html_repeated: CSS selector within a row item
     header_seen: str | None = None  # raw header text captured at authoring
     value_kind: Literal["time", "offset"] | None = None  # None == "time"
@@ -84,6 +87,13 @@ class BespokeSpec(BaseModel):
     module: str  # registry key for the agent-written extractor module
 
 
+class MediaSpec(BaseModel):
+    # Where an image/PDF timetable lives, recorded so the (deferred) media
+    # extraction phase can come back to it. The shape ("image"/"pdf") names the
+    # kind; for a per-month image the url points at the currently-visible month.
+    url: str
+
+
 class NavSpec(BaseModel):
     # How a JS calendar exposes the next month. "next" clicks a forward control;
     # "select" picks the target month (and optionally year) from a dropdown.
@@ -126,6 +136,7 @@ class SourceConfig(BaseModel):
     rules: RulesSpec | None = None
     widget: WidgetSpec | None = None
     bespoke: BespokeSpec | None = None
+    media: MediaSpec | None = None  # image/pdf: location of the deferred timetable
     paging: PagingSpec | None = None  # opt-in multi-month crawling
 
     @model_validator(mode="after")
@@ -138,6 +149,8 @@ class SourceConfig(BaseModel):
             raise ValueError("shape 'widget' requires a widget spec")
         if self.shape == "bespoke" and self.bespoke is None:
             raise ValueError("shape 'bespoke' requires a bespoke spec")
+        if self.shape in {"image", "pdf"} and self.media is None:
+            raise ValueError(f"shape {self.shape!r} requires a media spec")
         return self
 
     @classmethod

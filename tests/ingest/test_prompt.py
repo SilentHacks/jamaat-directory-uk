@@ -60,6 +60,70 @@ def test_browse_prompt_documents_both_paging_modes():
     assert "next_selector" in p and "month_select" in p
 
 
+def test_author_prompt_documents_packed_cell_time_index():
+    p = build_author_prompt(_bundle())
+    assert "time_index" in p
+    # and steers away from the (unsupported for html_table) intra-cell selector
+    low = p.lower()
+    assert "same" in low and "index" in low and "iqamah" in low
+
+
+def test_author_prompt_explains_table_orientation():
+    p = build_author_prompt(_bundle())
+    low = p.lower()
+    # the model must first read orientation: prayer names across the top (columns)
+    # vs down a left label column (rows)
+    assert "orientation" in low
+    assert "label column" in low
+
+
+def test_author_prompt_transpose_covers_prayers_as_columns():
+    p = build_author_prompt(_bundle())
+    low = p.lower()
+    # transpose is for prayer names running across the top, not only when DATES
+    # are the columns — e.g. a daily widget with Begins/Jamaah as separate rows
+    assert "transpose" in low
+    assert "separate row" in low
+
+
+def test_author_prompt_time_index_only_for_one_packed_cell():
+    p = build_author_prompt(_bundle())
+    low = p.lower()
+    # time_index applies ONLY to a single cell holding two clock times; begin and
+    # jamaah in separate rows/columns is a structural (transpose/label) case
+    assert "time_index" in p
+    assert "two clock times" in low
+    assert "separate" in low
+
+
+def test_browse_prompt_documents_packed_cell_time_index():
+    p = build_browse_prompt(_bundle())
+    assert "time_index" in p
+
+
+def test_browse_prompt_explains_table_orientation():
+    p = build_browse_prompt(_bundle())
+    assert "orientation" in p.lower()
+
+
+def test_author_prompt_documents_image_pdf_fallback():
+    p = build_author_prompt(_bundle())
+    # image/pdf are offered as last-resort shapes with a media URL...
+    assert '"image"' in p and '"pdf"' in p
+    assert "media" in p
+    # ...and the model is told to prefer a real HTML timetable first.
+    assert "image" in p.lower() and "html" in p.lower()
+
+
+def test_browse_prompt_documents_image_pdf_and_prefers_html():
+    p = build_browse_prompt(_bundle())
+    assert '"image"' in p and '"pdf"' in p
+    assert "media" in p
+    # The agent must keep looking for an HTML timetable before falling back.
+    low = p.lower()
+    assert "keep" in low or "only" in low  # instruction to exhaust HTML first
+
+
 def test_prompt_truncates_regions_and_caps_candidate_count():
     big = Candidate(url="https://m1.example/big", score=5.0, region_html="x" * 9000, text="t")
     bundle = CandidateBundle("m1", "https://m1.example/", [big, big, big, big])

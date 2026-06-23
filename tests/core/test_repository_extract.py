@@ -20,6 +20,29 @@ def test_authored_sources_filters(engine):
     assert ids == ["s1"]
 
 
+def test_authored_sources_includes_deferred_media(engine):
+    # deferred_media sources are re-run daily so their fixed Jumu'ah rolls forward.
+    _seed_source(engine)
+    with session_scope(engine) as s:
+        s.add(Source(id="s2", mosque_id="m1", url="https://m1.example/x.jpg",
+                     config='{"shape":"image","media":{"url":"https://m1.example/x.jpg"}}',
+                     triage_status="deferred_media"))
+    with session_scope(engine) as s:
+        ids = sorted(src.id for src in repo.authored_sources(s))
+    assert ids == ["s1", "s2"]
+
+
+def test_deferred_media_sources_query(engine):
+    _seed_source(engine)  # s1 is authored, not deferred
+    with session_scope(engine) as s:
+        s.add(Source(id="s2", mosque_id="m1", url="https://m1.example/x.jpg",
+                     config='{"shape":"image","media":{"url":"https://m1.example/x.jpg"}}',
+                     triage_status="deferred_media"))
+    with session_scope(engine) as s:
+        ids = [src.id for src in repo.deferred_media_sources(s)]
+    assert ids == ["s2"]
+
+
 def test_replace_source_occurrences_is_idempotent(engine):
     _seed_source(engine)
     rows = [OccurrenceRow("2026-06-21", "fajr", 0, "05:00", "04:45", None)]

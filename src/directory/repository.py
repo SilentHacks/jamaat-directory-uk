@@ -151,16 +151,32 @@ def iter_all_mosques(session: Session) -> list[Mosque]:
 
 
 def authored_sources(session: Session) -> list[Source]:
+    # deferred_media is included so the daily extractor rolls its fixed Jumu'ah
+    # forward with the horizon (it re-runs the deferred-media path, no fetch).
     stmt = (
         select(Source)
         .where(
-            Source.triage_status.in_(("authored", "review", "needs_reauthor")),
+            Source.triage_status.in_(
+                ("authored", "review", "needs_reauthor", "deferred_media")
+            ),
             Source.url.is_not(None),
             Source.config.is_not(None),
         )
         .order_by(Source.id)
     )
     return list(session.scalars(stmt))
+
+
+def deferred_media_sources(session: Session) -> list[Source]:
+    """Sources whose timetable is an image/PDF awaiting the (deferred) media
+    extraction phase — its entry point for picking up the backlog."""
+    return list(
+        session.scalars(
+            select(Source)
+            .where(Source.triage_status == "deferred_media")
+            .order_by(Source.id)
+        )
+    )
 
 
 def get_source(session: Session, source_id: str) -> Source | None:

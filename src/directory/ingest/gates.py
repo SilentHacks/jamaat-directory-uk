@@ -108,7 +108,7 @@ def _plausibility_failure(
     return None
 
 
-def _jumuah_failure(occurrences: list[OccurrenceRow]) -> str | None:
+def jumuah_failure(occurrences: list[OccurrenceRow]) -> str | None:
     jum_by_date: dict[str, list[OccurrenceRow]] = defaultdict(list)
     for o in occurrences:
         if o.prayer == "jumuah":
@@ -159,7 +159,7 @@ def run_gates(
     # window/monotonic checks above and the begin they derive from is in the source.
     # Fixed/rules Jumu‘ah sessions come from the config block (e.g. a day-widget
     # authored separately from the daily grid's source), not from the scraped grid
-    # HTML, so they are exempt too — their plausibility is enforced by _jumuah_failure.
+    # HTML, so they are exempt too — their plausibility is enforced by jumuah_failure.
     jumuah_from_config = config.jumuah is not None and config.jumuah.source in {"fixed", "rules"}
     if html_text:
         present = source_time_values(html_text)
@@ -172,7 +172,7 @@ def run_gates(
                 return GateResult("auto_reject", 0.0, [f"self-match failed for {o.jamaah_time}"])
 
     # Jumu'ah plausibility (malformed sessions are always rejected).
-    jum = _jumuah_failure(occurrences)
+    jum = jumuah_failure(occurrences)
     if jum is not None:
         return GateResult("auto_reject", 0.0, [jum])
 
