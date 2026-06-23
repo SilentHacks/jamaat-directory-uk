@@ -1,0 +1,350 @@
+{
+  "_note": "Reviewed duplicate-curation overlay; applied by `directory curate` after `seed`. merge=co-located dupes folded into a survivor; shared_url_review=distinct venues sharing one exact URL, flagged so auto-discovery skips them.",
+  "merge": [
+    {
+      "survivor": "mib-386",
+      "drop": [
+        "mib-3710"
+      ],
+      "url": "https://ashrafiamasjid.org/",
+      "reason": "co-located duplicate (35m apart); dropped entry marked 'temporary'"
+    },
+    {
+      "survivor": "mib-2647",
+      "drop": [
+        "mib-2015090401"
+      ],
+      "url": "https://baitulaman.org/",
+      "reason": "co-located duplicate (71m apart); dropped entry marked 'former'"
+    },
+    {
+      "survivor": "mib-1686",
+      "drop": [
+        "mib-973"
+      ],
+      "url": "https://masjidalhikmah.org.uk/",
+      "reason": "co-located duplicate (4m apart); identical name"
+    },
+    {
+      "survivor": "mib-15042701",
+      "drop": [
+        "mib-984"
+      ],
+      "url": "https://www.attaqwa.co.uk/",
+      "reason": "co-located duplicate (23m apart); dropped entry marked 'old premises'"
+    }
+  ],
+  "shared_url_review": [
+    {
+      "url": "https://islamicfoundation.ie/",
+      "mosque_ids": [
+        "mib-2365",
+        "mib-296",
+        "mib-297",
+        "mib-2998",
+        "mib-2999",
+        "mib-300",
+        "mib-3001",
+        "mib-3002",
+        "mib-3003",
+        "mib-3004",
+        "mib-3005",
+        "mib-3006",
+        "mib-3008",
+        "mib-3009",
+        "mib-301",
+        "mib-302",
+        "mib-303",
+        "mib-723"
+      ],
+      "reason": "18 distinct venues share this exact URL (292050m apart)"
+    },
+    {
+      "url": "https://www.suleymaniye.org/",
+      "mosque_ids": [
+        "mib-1154",
+        "mib-1185",
+        "mib-14051004",
+        "mib-14051005",
+        "mib-14051006",
+        "mib-14051007",
+        "mib-14051008",
+        "mib-14051009",
+        "mib-14051010",
+        "mib-981"
+      ],
+      "reason": "10 distinct venues share this exact URL (352940m apart)"
+    },
+    {
+      "url": "https://www.dawateislami.net/",
+      "mosque_ids": [
+        "mib-107",
+        "mib-1539",
+        "mib-1584",
+        "mib-1591",
+        "mib-2255",
+        "mib-2728",
+        "mib-442",
+        "mib-590"
+      ],
+      "reason": "8 distinct venues share this exact URL (320043m apart)"
+    },
+    {
+      "url": "https://www.albirr.com/",
+      "mosque_ids": [
+        "mib-1383",
+        "mib-2110",
+        "mib-2801",
+        "mib-909"
+      ],
+      "reason": "4 distinct venues share this exact URL (155351m apart)"
+    },
+    {
+      "url": "https://bmic.org.uk/",
+      "mosque_ids": [
+        "mib-1241",
+        "mib-1243",
+        "mib-2594"
+      ],
+      "reason": "3 distinct venues share this exact URL (562m apart)"
+    },
+    {
+      "url": "https://darulilm.org.uk/",
+      "mosque_ids": [
+        "mib-1087",
+        "mib-17080602",
+        "mib-697"
+      ],
+      "reason": "3 distinct venues share this exact URL (1034m apart)"
+    },
+    {
+      "url": "https://faizaneislam.org",
+      "mosque_ids": [
+        "mib-1791",
+        "mib-2814",
+        "mib-2865"
+      ],
+      "reason": "3 distinct venues share this exact URL (258505m apart)"
+    },
+    {
+      "url": "https://faizanemadina.org/",
+      "mosque_ids": [
+        "mib-1653",
+        "mib-2060",
+        "mib-2612"
+      ],
+      "reason": "3 distinct venues share this exact URL (192245m apart)"
+    },
+    {
+      "url": "https://maidstonemosque.com/",
+      "mosque_ids": [
+        "mib-1648",
+        "mib-1649",
+        "mib-1785"
+      ],
+      "reason": "3 distinct venues share this exact URL (4304m apart)"
+    },
+    {
+      "url": "https://mamissionuk.com/",
+      "mosque_ids": [
+        "mib-362",
+        "mib-3717",
+        "mib-3718"
+      ],
+      "reason": "3 distinct venues share this exact URL (25073m apart)"
+    },
+    {
+      "url": "https://www.wycombemosque.com/",
+      "mosque_ids": [
+        "mib-842",
+        "mib-847",
+        "mib-848"
+      ],
+      "reason": "3 distinct venues share this exact URL (2557m apart)"
+    },
+    {
+      "url": "http://maml.org.uk/",
+      "mosque_ids": [
+        "mib-3719",
+        "mib-3720"
+      ],
+      "reason": "2 distinct venues share this exact URL (145424m apart)"
+    },
+    {
+      "url": "http://smethwickjamiamosque.co.uk/",
+      "mosque_ids": [
+        "mib-167",
+        "mib-2016062003"
+      ],
+      "reason": "2 distinct venues share this exact URL (409m apart)"
+    },
+    {
+      "url": "http://www.mkjameemasjid.org/",
+      "mosque_ids": [
+        "mib-149",
+        "mib-394"
+      ],
+      "reason": "2 distinct venues share this exact URL (912m apart)"
+    },
+    {
+      "url": "http://www.welwynis.org/",
+      "mosque_ids": [
+        "mib-1267",
+        "mib-2589"
+      ],
+      "reason": "2 distinct venues share this exact URL (1897m apart)"
+    },
+    {
+      "url": "https://aberdeenmosque.org/",
+      "mosque_ids": [
+        "mib-1",
+        "mib-1683"
+      ],
+      "reason": "2 distinct venues share this exact URL (1292m apart)"
+    },
+    {
+      "url": "https://becktonislamicassociation.org.uk/",
+      "mosque_ids": [
+        "mib-17080404",
+        "mib-1736"
+      ],
+      "reason": "2 distinct venues share this exact URL (913m apart)"
+    },
+    {
+      "url": "https://belfastislamiccentre.org.uk/",
+      "mosque_ids": [
+        "mib-67",
+        "mib-73"
+      ],
+      "reason": "2 distinct venues share this exact URL (663m apart)"
+    },
+    {
+      "url": "https://bismillahcentre.com/",
+      "mosque_ids": [
+        "mib-1558",
+        "mib-2682"
+      ],
+      "reason": "2 distinct venues share this exact URL (1266m apart)"
+    },
+    {
+      "url": "https://ebict.co.uk/",
+      "mosque_ids": [
+        "mib-1625",
+        "mib-289"
+      ],
+      "reason": "2 distinct venues share this exact URL (156m apart)"
+    },
+    {
+      "url": "https://legacy.abrahamicfoundation.org.uk/",
+      "mosque_ids": [
+        "mib-1740",
+        "mib-1741"
+      ],
+      "reason": "2 distinct venues share this exact URL (4830m apart)"
+    },
+    {
+      "url": "https://mwht.org.uk/",
+      "mosque_ids": [
+        "mib-1225",
+        "mib-1971"
+      ],
+      "reason": "2 distinct venues share this exact URL (170554m apart)"
+    },
+    {
+      "url": "https://newmarketmosque.com/",
+      "mosque_ids": [
+        "mib-1035",
+        "mib-1717"
+      ],
+      "reason": "2 distinct venues share this exact URL (103m apart)"
+    },
+    {
+      "url": "https://skegnessmosque.org/",
+      "mosque_ids": [
+        "mib-1702",
+        "mib-1703"
+      ],
+      "reason": "2 distinct venues share this exact URL (709m apart)"
+    },
+    {
+      "url": "https://westnorwoodmosque.com/",
+      "mosque_ids": [
+        "mib-1444",
+        "mib-1445"
+      ],
+      "reason": "2 distinct venues share this exact URL (209m apart)"
+    },
+    {
+      "url": "https://www.balhammosque.org/",
+      "mosque_ids": [
+        "mib-1400",
+        "mib-1412"
+      ],
+      "reason": "2 distinct venues share this exact URL (1871m apart)"
+    },
+    {
+      "url": "https://www.bradfordgrandmosque.co.uk",
+      "mosque_ids": [
+        "mib-482",
+        "mib-912"
+      ],
+      "reason": "2 distinct venues share this exact URL (229211m apart)"
+    },
+    {
+      "url": "https://www.islamiccentre.org/",
+      "mosque_ids": [
+        "mib-1006",
+        "mib-965"
+      ],
+      "reason": "2 distinct venues share this exact URL (672m apart)"
+    },
+    {
+      "url": "https://www.mcwas.org/",
+      "mosque_ids": [
+        "mib-1334",
+        "mib-1335"
+      ],
+      "reason": "2 distinct venues share this exact URL (2919m apart)"
+    },
+    {
+      "url": "https://www.minhaj.org/",
+      "mosque_ids": [
+        "mib-2039",
+        "mib-2637"
+      ],
+      "reason": "2 distinct venues share this exact URL (33787m apart)"
+    },
+    {
+      "url": "https://www.swanseamosque.org/",
+      "mosque_ids": [
+        "mib-2312",
+        "mib-2819"
+      ],
+      "reason": "2 distinct venues share this exact URL (91m apart)"
+    },
+    {
+      "url": "https://www.tvmacharity.org.uk/",
+      "mosque_ids": [
+        "mib-1483",
+        "mib-1714"
+      ],
+      "reason": "2 distinct venues share this exact URL (179m apart)"
+    },
+    {
+      "url": "https://www.ukimoldham.org.uk/",
+      "mosque_ids": [
+        "mib-1150",
+        "mib-2023"
+      ],
+      "reason": "2 distinct venues share this exact URL (2731m apart)"
+    },
+    {
+      "url": "https://www.watfordmosque.org.uk/",
+      "mosque_ids": [
+        "mib-2367",
+        "mib-2372"
+      ],
+      "reason": "2 distinct venues share this exact URL (3394m apart)"
+    }
+  ]
+}

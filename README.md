@@ -23,6 +23,7 @@ store.
 uv sync --extra dev
 uv run directory import-mib --input mib_uk_ie_mosques.json   # clean upstream export
 uv run directory seed --input data/seed/mosques.json         # load mosque list
+uv run directory curate                                      # apply duplicate overlay
 uv run directory serve                                       # http://127.0.0.1:8000
 ```
 
@@ -48,6 +49,29 @@ spec that drives the headless browser through a JS calendar (clicking a
 next-month control or picking from a month/year dropdown). The current month is
 required; a future month that isn't published yet is tolerated and flagged
 `partial_horizon` until it appears.
+
+### De-duplication (one-time, deterministic)
+
+The upstream export contains records that share a website URL in two distinct
+shapes, and the mosque list is rebuilt on every `seed`, so the dedupe decisions
+live in a reviewed, git-tracked overlay (`data/curation/duplicates.json`) applied
+by `directory curate`:
+
+```bash
+directory curate                                  # merge dupes, flag shared-URL venues
+directory curate --input data/curation/dupes.json # custom overlay
+```
+
+* **merge** — genuinely co-located duplicate records (same venue entered twice,
+  e.g. an "Old premises" alongside the current one). The survivor is kept and the
+  rest are folded in (aliases preserved) and deleted.
+* **shared_url_review** — several *distinct* venues that point at one exact URL
+  (umbrella org sites, satellite Jumu'ah halls, mis-assigned URLs). Both rows are
+  kept — they are separately routable for the journey-planner — but each is
+  flagged `review` so automatic discovery skips it and never misattributes one
+  site's timetable to a venue it doesn't describe. An authored source is never
+  clobbered, and an explicit `discover --mosque-id` still reaches a flagged
+  mosque as a manual override.
 
 ### Discovery (one-time, deterministic, £0)
 

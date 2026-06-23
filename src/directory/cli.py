@@ -60,6 +60,23 @@ def seed(input: Path = typer.Option(..., "--input", help="Seed JSON file")) -> N
 
 
 @app.command()
+def curate(
+    input: Path = typer.Option(  # noqa: B008
+        Path("data/curation/duplicates.json"), "--input", help="Curation overlay JSON"
+    ),
+) -> None:
+    """Apply the reviewed duplicate-curation overlay (merge dupes, flag shared-URL
+    venues for review). Run after `seed`, before `discover`."""
+    from directory.ingest.curate import apply_curation, load_curation
+
+    engine = _engine_from_env()
+    summary = apply_curation(engine, load_curation(input))
+    typer.echo(
+        f"merged={summary.merged} flagged={summary.flagged} skipped={summary.skipped}"
+    )
+
+
+@app.command()
 def serve(host: str = "127.0.0.1", port: int = 8000) -> None:
     """Run the API + browse site."""
     import uvicorn

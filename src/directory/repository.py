@@ -319,8 +319,59 @@ def sources_with_flag(session: Session, flag: str) -> list[Source]:
 
 
 def mosques_for_discovery(session: Session) -> list[Mosque]:
+    """Mosques eligible for the automatic discovery funnel: those with a website,
+    excluding any flagged as a shared-URL conflict (multiple distinct venues
+    pointing at one exact URL). Those are parked in the review queue so the daily
+    path never misattributes one site's timetable to a venue it doesn't describe;
+    an explicit ``discover --mosque-id`` still reaches them as a manual override."""
+    shared_url = select(Source.mosque_id).where(Source.review_reason.like("shared_url%"))
     return list(
         session.scalars(
-            select(Mosque).where(Mosque.website_url.is_not(None)).order_by(Mosque.id)
+            select(Mosque)
+            .where(Mosque.website_url.is_not(None), Mosque.id.not_in(shared_url))
+            .order_by(Mosque.id)
         )
     )
+
+
+def merge_mosque(session: Session, survivor_id: str, drop_id: str) -> bool:
+    """Fold a duplicate mosque into its survivor and delete it. Repoints the
+    dropped mosque's occurrences (discarding any that would collide with the
+    survivor's primary key) and deletes its source/run rows, then records the
+    dropped name + aliases on the survivor. Returns False when either id is
+    already absent, so re-running curation is a no-op."""
+    survivor = session.get(Mosque, survivor_id)
+    dropped = session.get(Mosque, drop_id)
+    if survivor is None or dropped is None:
+        return False
+
+    aliases = survivor.aliases_list
+    for alias in [dropped.name, *dropped.aliases_list]:
+        if alias and alias != survivor.name and alias not in aliases:
+            aliases.append(alias)
+    survivor.aliases = json.dumps(aliases)
+
+    survivor_keys = {
+        (o.date, o.prayer, o.session_idx)
+        for o in session.scalars(select(Occurrence).where(Occurrence.mosque_id == survivor_id))
+    }
+    for occ in session.scalars(select(Occurrence).where(Occurrence.mosque_id == drop_id)):
+        if (occ.date, occ.prayer, occ.session_idx) in survivor_keys:
+            session.delete(occ)
+        else:
+            occ.mosque_id = survivor_id
+
+    drop_source_ids = [
+        s.id for s in session.scalars(select(Source).where(Source.mosque_id == drop_id))
+    ]
+    if drop_source_ids:
+        session.execute(
+            Occurrence.__table__.update()
+            .where(Occurrence.source_id.in_(drop_source_ids))
+            .values(source_id=None)
+        )
+        session.execute(delete(ExtractorRun).where(ExtractorRun.source_id.in_(drop_source_ids)))
+        session.execute(delete(Source).where(Source.id.in_(drop_source_ids)))
+
+    session.delete(dropped)
+    return True
