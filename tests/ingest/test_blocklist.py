@@ -16,6 +16,13 @@ def test_real_mosque_host_allowed():
     assert not is_blocklisted("https://notfacebook.com/")  # suffix must be on a dot boundary
 
 
+def test_non_timetable_institutional_hosts_blocked():
+    # pages that share a URL across venues but never carry a jamaat timetable
+    assert is_blocklisted("https://www.bradfordhospitals.nhs.uk/sparc/")
+    assert is_blocklisted("http://www.huddersfieldstudent.com/izone/content/168375/")
+    assert is_blocklisted("https://heritage.ismaili.net/node/21538")
+
+
 def test_none_and_empty_are_not_blocked():
     assert not is_blocklisted(None)
     assert not is_blocklisted("")

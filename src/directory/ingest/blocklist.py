@@ -39,6 +39,10 @@ _DEFAULT_BLOCKLIST: frozenset[str] = frozenset(
         # archives / aggregators
         "web.archive.org",
         "mosques.muslimsinbritain.org",
+        "heritage.ismaili.net",
+        # institutional pages that never carry a mosque jamaat timetable
+        "huddersfieldstudent.com",
+        "bradfordhospitals.nhs.uk",
     }
 )
 
