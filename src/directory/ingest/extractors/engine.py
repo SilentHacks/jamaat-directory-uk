@@ -7,7 +7,13 @@ from bs4 import BeautifulSoup
 from directory.domain import DAILY_PRAYERS, Prayer
 from directory.ingest.extractors.config_schema import SourceConfig
 from directory.ingest.extractors.tablegrid import caption_month, grid_matrix, row_month
-from directory.ingest.normalize import parse_date, parse_offset, parse_time, resolve_prayer
+from directory.ingest.normalize import (
+    parse_date,
+    parse_offset,
+    parse_time,
+    parse_times,
+    resolve_prayer,
+)
 
 
 @dataclass
@@ -55,7 +61,15 @@ def _cell_from_text(raw: str, col, prayer: Prayer, d: date) -> Cell | None:
             header_seen=col.header_seen, offset_min=off,
             base_prayer=col.base_prayer or prayer,
         )
-    t = parse_time(raw, prefer_pm=_prefer_pm(prayer))
+    if col.time_index is not None:
+        # The cell packs several times (e.g. begin + iqamah); pick this column's
+        # by ordinal position rather than taking the first.
+        times = parse_times(raw, prefer_pm=_prefer_pm(prayer))
+        if col.time_index >= len(times):
+            return None
+        t = times[col.time_index]
+    else:
+        t = parse_time(raw, prefer_pm=_prefer_pm(prayer))
     if t is None:
         return None
     return Cell(date=d, prayer=prayer, kind=col.kind, time=t, header_seen=col.header_seen)

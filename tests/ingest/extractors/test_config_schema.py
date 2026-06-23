@@ -70,6 +70,26 @@ def test_offset_column_with_base_prayer_parses():
     assert col.base_prayer == Prayer.MAGHRIB
 
 
+def test_time_index_column_parses_and_defaults_absent():
+    # A single <td> packing begin+iqamah is split by two columns at the same
+    # index, distinguished by an ordinal time_index (0 = begin, 1 = iqamah).
+    cfg = SourceConfig.from_json(
+        '{"shape":"html_table","grid":{"columns":['
+        '{"kind":"begin","prayer":"fajr","index":2,"time_index":0},'
+        '{"kind":"jamaah","prayer":"fajr","index":2,"time_index":1}]}}'
+    )
+    assert cfg.grid.columns[0].time_index == 0
+    assert cfg.grid.columns[1].time_index == 1
+
+    # Default stays absent so existing stored configs are byte-identical.
+    stored = SourceConfig.from_json(
+        '{"shape":"html_table","grid":{"columns":['
+        '{"kind":"jamaah","prayer":"fajr","index":1}]}}'
+    ).to_json()
+    assert SourceConfig.from_json(stored).grid.columns[0].time_index is None
+    assert "time_index" not in stored
+
+
 def test_vertical_single_day_grid_parses_and_defaults_are_absent():
     # Prayer-rows layout: a label column names prayers, header names kinds, no
     # date axis. prayer_label_index selects orientation; single_day stamps today.

@@ -60,6 +60,19 @@ def test_browse_prompt_documents_both_paging_modes():
     assert "next_selector" in p and "month_select" in p
 
 
+def test_author_prompt_documents_packed_cell_time_index():
+    p = build_author_prompt(_bundle())
+    assert "time_index" in p
+    # and steers away from the (unsupported for html_table) intra-cell selector
+    low = p.lower()
+    assert "same" in low and "index" in low and "iqamah" in low
+
+
+def test_browse_prompt_documents_packed_cell_time_index():
+    p = build_browse_prompt(_bundle())
+    assert "time_index" in p
+
+
 def test_author_prompt_documents_image_pdf_fallback():
     p = build_author_prompt(_bundle())
     # image/pdf are offered as last-resort shapes with a media URL...

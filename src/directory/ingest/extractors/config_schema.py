@@ -14,6 +14,9 @@ class ColumnSpec(BaseModel):
     kind: Literal["jamaah", "begin"]
     prayer: Prayer | None = None  # None → prayer comes from a row label
     index: int | None = None  # html_table: 0-based column index (post-transpose)
+    # html_table: when one cell packs several times (e.g. begin + iqamah), the
+    # 0-based position of this column's time within that cell. None → first time.
+    time_index: int | None = None
     selector: str | None = None  # html_repeated: CSS selector within a row item
     header_seen: str | None = None  # raw header text captured at authoring
     value_kind: Literal["time", "offset"] | None = None  # None == "time"

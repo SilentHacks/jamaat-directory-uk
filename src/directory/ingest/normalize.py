@@ -19,13 +19,7 @@ def _ascii_digits(s: str) -> str:
     return s.translate(_ARABIC_INDIC)
 
 
-def parse_time(raw: str | None, *, prefer_pm: bool | None = None) -> str | None:
-    if not raw:
-        return None
-    s = _ascii_digits(str(raw)).strip().lower()
-    m = _TIME_RE.search(s)
-    if not m:
-        return None
+def _time_from_match(m: "re.Match[str]", prefer_pm: bool | None) -> str | None:
     hh, mm, ap = int(m.group(1)), int(m.group(2)), m.group(3)
     if mm > 59:
         return None
@@ -42,6 +36,32 @@ def parse_time(raw: str | None, *, prefer_pm: bool | None = None) -> str | None:
     if hh > 23:
         return None
     return f"{hh:02d}:{mm:02d}"
+
+
+def parse_time(raw: str | None, *, prefer_pm: bool | None = None) -> str | None:
+    if not raw:
+        return None
+    s = _ascii_digits(str(raw)).strip().lower()
+    m = _TIME_RE.search(s)
+    if not m:
+        return None
+    return _time_from_match(m, prefer_pm)
+
+
+def parse_times(raw: str | None, *, prefer_pm: bool | None = None) -> list[str]:
+    """Every clock time in ``raw``, in source order — for a single cell that packs
+    more than one time (e.g. a begin + iqamah pair "2:55 AM Iqm 3:45 AM"). Each is
+    resolved with the same ``prefer_pm`` rule as ``parse_time``; duplicates and
+    order are preserved so a column can pick the Nth time by position."""
+    if not raw:
+        return []
+    s = _ascii_digits(str(raw)).strip().lower()
+    out: list[str] = []
+    for m in _TIME_RE.finditer(s):
+        t = _time_from_match(m, prefer_pm)
+        if t is not None:
+            out.append(t)
+    return out
 
 
 _OFFSET_RE = re.compile(
@@ -98,6 +118,12 @@ _DMY_RE = re.compile(r"\b(\d{1,2})[/.\-](\d{1,2})(?:[/.\-](\d{2,4}))?\b")
 _DAY_MONTH_RE = re.compile(r"\b(\d{1,2})(?:st|nd|rd|th)?\s+([a-z]{3,})\b")
 _MONTH_DAY_RE = re.compile(r"\b([a-z]{3,})\s+(\d{1,2})(?:st|nd|rd|th)?\b")
 _DAY_ONLY_RE = re.compile(r"^\s*(\d{1,2})(?:st|nd|rd|th)?\s*$")
+# A weekday word (full or abbreviated) followed by a day-of-month, e.g. "Mon 1",
+# "Tue 2", "Sunday 30", "Fri 13th" — common in monthly timetables where the month
+# comes from context. The weekday is decorative; only the day number is used.
+_WEEKDAY_DAY_RE = re.compile(
+    r"^\s*(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?\s*$"
+)
 
 
 _MONTH_LABEL_RE = re.compile(r"^([a-z]{3,})(?:\s+\d{4})?$")
@@ -156,6 +182,10 @@ def parse_date(raw: str | None, *, year: int, month: int | None = None) -> date 
         return _safe_date(year, _MONTHS[m.group(1)], int(m.group(2)))
 
     m = _DAY_ONLY_RE.match(s)
+    if m and month is not None:
+        return _safe_date(year, month, int(m.group(1)))
+
+    m = _WEEKDAY_DAY_RE.match(s)
     if m and month is not None:
         return _safe_date(year, month, int(m.group(1)))
 
