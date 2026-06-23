@@ -125,8 +125,34 @@ def _keyword_links(
     return out
 
 
+def _table_richness(table) -> tuple[int, int]:
+    """Rank a ``<table>`` as a prayer timetable: (distinct daily prayers named,
+    clock-time count). A full month's grid carries far more times than a single
+    day's widget, so the time count separates the rich source from a thin one
+    once both name the same prayers."""
+    text = table.get_text(" ", strip=True)
+    return _distinct_prayers(text), len(_TIME_SCAN_RE.findall(text))
+
+
 def strip_to_region(html: str) -> tuple[str, str]:
+    """The slice of a page handed to the AI: the richest prayer ``<table>`` on it,
+    not merely the first. A page often leads with a thin daily widget while a full
+    multi-day timetable sits lower (or a clean per-prayer table alongside it); the
+    first-table heuristic fed the agent the weakest source. Pick the table naming
+    the most daily prayers and carrying the most clock times; fall back to the
+    first table, then the body, when nothing looks like a prayer timetable."""
     soup = BeautifulSoup(html, "lxml")
+    best = None
+    best_rank = (0, 0)
+    for table in soup.find_all("table"):
+        prayers, times = _table_richness(table)
+        if prayers < 2 or times < 1:  # not a prayer timetable; ignore
+            continue
+        rank = (prayers, times)
+        if best is None or rank > best_rank:
+            best, best_rank = table, rank
+    if best is not None:
+        return str(best), best.get_text(" ", strip=True)
     table = soup.find("table")
     if table is not None:
         return str(table), table.get_text(" ", strip=True)

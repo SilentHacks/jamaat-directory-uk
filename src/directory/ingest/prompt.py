@@ -16,7 +16,7 @@ Return ONE JSON object and nothing else (no prose, no code fences):
     "grid": {{                       // required for html_table / html_repeated
       "table_selector": "<css>",     // html_table: CSS for the <table> (optional)
       "row_selector": "<css>",       // html_repeated: CSS for each day item
-      "transpose": false,            // true if prayers are ROWS and DATES are columns
+      "transpose": false,            // true if the PRAYER NAMES run across the top columns
       "prayer_label_index": null,    // prayer-rows layout: column holding the prayer name
       "single_day": false,           // true if the table shows only today (no date column)
       "date": {{"index": 0, "selector": "<css>", "format": null}},
@@ -43,17 +43,36 @@ Return ONE JSON object and nothing else (no prose, no code fences):
 
 Rules:
 - "prayer" is exactly one of: {_PRAYERS}.
+- READ THE ORIENTATION FIRST, then map it to the config:
+  (a) Where are the PRAYER NAMES — across the top as column headers, or down a
+      left-hand label column (one prayer per row)?
+  (b) What runs DOWN the rows — dates/days (a multi-day timetable), or just a
+      couple of kind rows like "Begins"/"Jamā‘ah" (a single-day widget)?
+  * Prayer names across the top + a DATE column → default columns layout: set
+    "date" and one column per prayer (by "index").
+  * Prayer names across the top + a single row of times (today only) →
+    "single_day": true (omit "date"); re-read every day.
+  * Prayer names across the top + the rows are kind labels (Begins / Jamā‘ah)
+    with NO date column (a daily widget) → set "transpose": true so prayers
+    become rows, then "prayer_label_index": 0 with one column per kind ("begin" /
+    "jamaah") at that kind row's index.
+  * Prayer names down a left label column + the header names the kind
+    (Begin/Iqamah) → set "prayer_label_index" to that label column and leave each
+    column's "prayer" null — it is taken from the row label.
+- "transpose": true whenever the PRAYER NAMES run across the top as columns and
+  what runs down the side is NOT dates; it flips the grid so each row is one
+  prayer, then read it as a prayer-label table.
 - html_table columns use a 0-based "index"; html_repeated columns use a CSS "selector".
-  An html_table cell cannot be sub-selected by CSS — if ONE cell packs two times
-  (a begin and an iqamah, e.g. "2:55 AM Iqm 3:45 AM"), add TWO columns at the SAME
-  "index" and set "time_index" to pick each by position: 0 = first time (begin),
-  1 = second (iqamah). Do not use "selector" to split a packed html_table cell.
+  An html_table cell cannot be sub-selected by CSS — if ONE cell packs two clock
+  times (a begin and an iqamah in the SAME cell, e.g. "2:55 AM Iqm 3:45 AM"), add
+  TWO columns at the SAME "index" and set "time_index" to pick each by position:
+  0 = first time (begin), 1 = second (iqamah). Do not use "selector" to split a
+  packed html_table cell.
+- Use "time_index" ONLY for a single cell that literally holds two clock times.
+  If "begin" and "jamaah" sit in SEPARATE rows or SEPARATE columns, that is a
+  structural layout (transpose / prayer_label_index / two columns at different
+  indices) — NEVER time_index.
 - "kind" is "jamaah" (congregation / iqamah) or "begin" (adhan / start time).
-- If prayers run DOWN the rows (a label column) and the header names the kind
-  (Begin/Iqamah), set "prayer_label_index" to that label column and leave each
-  column's "prayer" null — it is taken from the row label.
-- If the table shows only today's times with no date column, set "single_day": true
-  (omit "date"); it is re-read every day.
 - Use "paging" ONLY when one page shows a single month and a different month
   lives at a different URL (e.g. /2026/07). Set "mode":"url_template" and a
   "url_template" with "{{year}}" and "{{month}}" (or "{{month:02d}}") placeholders.
@@ -104,9 +123,15 @@ For a standard layout, return:
   "config": {{ "shape": "html_table" | "html_repeated" | "rules" | "widget", ... }}
 }}
 (use the same config fields as the single-shot schema: grid/columns, jumuah, rules,
-widget — 0-based "index" for html_table, CSS "selector" for html_repeated). If one
-html_table cell packs two times (begin + iqamah), add two columns at the SAME
-"index" with "time_index" 0 (begin) and 1 (iqamah) — never a CSS selector.
+widget — 0-based "index" for html_table, CSS "selector" for html_repeated). Read the
+ORIENTATION first: if the PRAYER NAMES run across the top columns and the rows are
+dates, use the default columns layout; if they run across the top but the rows are
+kind labels (Begins/Jamā‘ah) or it is a single-day widget, set "transpose": true and
+read it as a prayer-label table; if prayers run down a left label column, set
+"prayer_label_index". Only when ONE html_table cell literally packs two clock times
+(begin + iqamah in the same cell) add two columns at the SAME "index" with
+"time_index" 0 (begin) and 1 (iqamah) — never a CSS selector, and never for begin /
+jamaah that already sit in separate rows or columns.
 
 If the daily timetable is published ONLY as an image (JPG/PNG) or a PDF, first keep
 looking — check other pages, embedded widgets, and linked prayer-time pages — for an
