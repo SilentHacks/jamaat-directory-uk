@@ -9,7 +9,10 @@ Return ONE JSON object and nothing else (no prose, no code fences):
 {{
   "url": "<the candidate page URL the timetable lives on>",
   "config": {{
-    "shape": "html_table" | "html_repeated" | "rules" | "widget",
+    "shape": "html_table" | "html_repeated" | "rules" | "widget" | "image" | "pdf",
+    "media": {{                      // required for image / pdf
+      "url": "<direct URL of the image or PDF timetable>"
+    }},
     "grid": {{                       // required for html_table / html_repeated
       "table_selector": "<css>",     // html_table: CSS for the <table> (optional)
       "row_selector": "<css>",       // html_repeated: CSS for each day item
@@ -56,6 +59,13 @@ Rules:
   against "base_prayer"'s begin time on the same day (default: the column's own
   prayer) — so the table MUST also have a "begin" column for that base prayer.
 - Use "rules" only for fixed times; "widget" only for embedded prayer-time widgets.
+- Always PREFER a real HTML/structured timetable. Use "image" or "pdf" ONLY when
+  the daily timetable in every candidate region is published solely as an image
+  (JPG/PNG) or a PDF — common for monthly printable timetables — and no HTML
+  table/list of daily times exists anywhere in the candidates. Then set
+  "shape":"image" (or "pdf") and "media":{{"url":"<direct image/PDF URL>"}}, and
+  still include any "jumuah" block you can read from the HTML. The image/PDF
+  itself is read later; never invent a "rules" config to stand in for one.
 - Times are 24-hour "HH:MM".
 """
 
@@ -89,6 +99,20 @@ For a standard layout, return:
 }}
 (use the same config fields as the single-shot schema: grid/columns, jumuah, rules,
 widget — 0-based "index" for html_table, CSS "selector" for html_repeated).
+
+If the daily timetable is published ONLY as an image (JPG/PNG) or a PDF, first keep
+looking — check other pages, embedded widgets, and linked prayer-time pages — for an
+HTML version. Only when no HTML/structured daily timetable exists anywhere on the
+site, return:
+{{
+  "url": "<the page the timetable lives on>",
+  "config": {{
+    "shape": "image" | "pdf",
+    "media": {{"url": "<direct URL of the image or PDF timetable>"}},
+    "jumuah": {{ ... }}   // optional: any Friday times you can read from HTML
+  }}
+}}
+The image/PDF is read in a later phase; do NOT force it into "rules"/"html_table".
 
 Only when no standard shape fits a genuinely unique site, return a bespoke module:
 {{
@@ -130,7 +154,9 @@ Rules:
   leave columns' "prayer" null. If the table shows only today (no date column),
   set "single_day": true and omit "date".
 - Times are 24-hour "HH:MM".
-- If you cannot find a timetable within your budget, output exactly {{}}.
+- Output exactly {{}} only when you find NO timetable at all (not even an image or
+  PDF) within your budget. A timetable that exists only as an image/PDF is an
+  "image"/"pdf" config, not {{}}.
 """
 
 

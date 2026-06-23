@@ -60,6 +60,24 @@ def test_browse_prompt_documents_both_paging_modes():
     assert "next_selector" in p and "month_select" in p
 
 
+def test_author_prompt_documents_image_pdf_fallback():
+    p = build_author_prompt(_bundle())
+    # image/pdf are offered as last-resort shapes with a media URL...
+    assert '"image"' in p and '"pdf"' in p
+    assert "media" in p
+    # ...and the model is told to prefer a real HTML timetable first.
+    assert "image" in p.lower() and "html" in p.lower()
+
+
+def test_browse_prompt_documents_image_pdf_and_prefers_html():
+    p = build_browse_prompt(_bundle())
+    assert '"image"' in p and '"pdf"' in p
+    assert "media" in p
+    # The agent must keep looking for an HTML timetable before falling back.
+    low = p.lower()
+    assert "keep" in low or "only" in low  # instruction to exhaust HTML first
+
+
 def test_prompt_truncates_regions_and_caps_candidate_count():
     big = Candidate(url="https://m1.example/big", score=5.0, region_html="x" * 9000, text="t")
     bundle = CandidateBundle("m1", "https://m1.example/", [big, big, big, big])

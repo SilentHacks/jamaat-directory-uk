@@ -117,6 +117,46 @@ def test_rules_shape_requires_rules_block():
     assert ok.rules.rules[0].prayer == Prayer.DHUHR
 
 
+def test_image_shape_requires_media_block():
+    with pytest.raises(ValueError):
+        SourceConfig.from_json('{"shape":"image"}')
+    ok = SourceConfig.from_json(
+        '{"shape":"image","media":{"url":"https://x.org/june.jpg"}}'
+    )
+    assert ok.shape == "image"
+    assert ok.media.url == "https://x.org/june.jpg"
+
+
+def test_pdf_shape_requires_media_block():
+    with pytest.raises(ValueError):
+        SourceConfig.from_json('{"shape":"pdf"}')
+    ok = SourceConfig.from_json('{"shape":"pdf","media":{"url":"https://x.org/t.pdf"}}')
+    assert ok.shape == "pdf"
+    assert ok.media.url == "https://x.org/t.pdf"
+
+
+def test_image_shape_carries_jumuah_and_roundtrips():
+    cfg = SourceConfig.from_json(
+        '{"shape":"image","media":{"url":"https://x.org/june.jpg"},'
+        '"jumuah":{"source":"fixed","sessions":[{"label":"Jumu\\u2019ah","time":"13:30"}]}}'
+    )
+    assert cfg.media.url == "https://x.org/june.jpg"
+    assert cfg.jumuah.sessions[0].time == "13:30"
+    again = SourceConfig.from_json(cfg.to_json())
+    assert again.media.url == cfg.media.url
+    assert again.jumuah.sessions[0].label == cfg.jumuah.sessions[0].label
+
+
+def test_media_default_absent_for_legacy_configs():
+    # An existing stored config never grows a media key → no DB churn.
+    stored = SourceConfig.from_json(
+        '{"shape":"html_table","grid":{"columns":['
+        '{"kind":"jamaah","prayer":"fajr","index":1}]}}'
+    ).to_json()
+    assert SourceConfig.from_json(stored).media is None
+    assert "media" not in stored
+
+
 def test_paging_url_template_parses_and_roundtrips():
     cfg = SourceConfig.from_json(
         '{"shape":"html_table","grid":{"columns":['

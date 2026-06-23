@@ -301,6 +301,18 @@ def _extract_bespoke(
         return ExtractionResult(warnings=[f"bespoke extractor {key!r} raised: {exc}"])
 
 
+def _extract_media(
+    html: str, config: SourceConfig, *, year: int, month: int | None = None,
+    today: date | None = None,
+) -> ExtractionResult:
+    # image/pdf timetables yield no scraped daily cells — the media itself is not
+    # parsed here (that extraction is deferred). The runner short-circuits these
+    # shapes to the deferred-media path before reaching the engine; this handler
+    # only guards against any other caller so extract() never crashes on them.
+    # Any jumuah block is still materialized from config downstream.
+    return ExtractionResult()
+
+
 # The single place that answers "what can the engine extract, and how is each
 # shape resolved". Widget/bespoke seams live behind their helper, not inline.
 _SHAPE_EXTRACTORS: dict[str, Callable[..., ExtractionResult]] = {
@@ -310,6 +322,8 @@ _SHAPE_EXTRACTORS: dict[str, Callable[..., ExtractionResult]] = {
     "rules": _extract_rules,
     "widget": _extract_widget,
     "bespoke": _extract_bespoke,
+    "image": _extract_media,
+    "pdf": _extract_media,
 }
 
 

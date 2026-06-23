@@ -24,7 +24,7 @@ from directory.models import Mosque
 @dataclass
 class AuthorOutcome:
     mosque_id: str
-    outcome: str  # authored|review|needs_reauthor|no_candidate|skipped|failed
+    outcome: str  # authored|review|deferred_media|needs_reauthor|no_candidate|skipped|failed
     model: str | None = None
     detail: str | None = None
 
@@ -122,7 +122,9 @@ def _attempt(
         ctx.engine, mosque_id, today=ctx.today, horizon_days=ctx.horizon_days,
         fetcher=ctx.fetcher, renderer=ctx.renderer, nav_renderer=ctx.nav_renderer,
     )
-    if result.triage_status in {"authored", "review"}:
+    # deferred_media is terminal: the image/PDF was classified and recorded, so
+    # there is nothing for a stronger model to improve — do not escalate.
+    if result.triage_status in {"authored", "review", "deferred_media"}:
         return AuthorOutcome(mosque_id, result.triage_status, model), None
     return None, result.error or "gates rejected the authored config"
 
