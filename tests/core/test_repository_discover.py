@@ -67,5 +67,6 @@ def test_mosques_for_discovery_skips_no_website(engine):
     with session_scope(engine) as s:
         _add(s, "has", "https://has.example")
         _add(s, "no", None)
+        _add(s, "blank", "")  # upstream uses "" as well as NULL for "no website"
     with session_scope(engine) as s:
         assert [m.id for m in repo.mosques_for_discovery(s)] == ["has"]

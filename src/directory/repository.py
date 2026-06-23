@@ -319,16 +319,22 @@ def sources_with_flag(session: Session, flag: str) -> list[Source]:
 
 
 def mosques_for_discovery(session: Session) -> list[Mosque]:
-    """Mosques eligible for the automatic discovery funnel: those with a website,
-    excluding any flagged as a shared-URL conflict (multiple distinct venues
-    pointing at one exact URL). Those are parked in the review queue so the daily
-    path never misattributes one site's timetable to a venue it doesn't describe;
-    an explicit ``discover --mosque-id`` still reaches them as a manual override."""
+    """Mosques eligible for the automatic discovery funnel: those with a non-empty
+    website, excluding any flagged as a shared-URL conflict (multiple distinct
+    venues pointing at one exact URL). Those are parked in the review queue so the
+    daily path never misattributes one site's timetable to a venue it doesn't
+    describe; an explicit ``discover --mosque-id`` still reaches them as a manual
+    override. Empty-string URLs are skipped too — the upstream export uses ``""``
+    as well as NULL for "no website", and a blank URL only burns a dead fetch."""
     shared_url = select(Source.mosque_id).where(Source.review_reason.like("shared_url%"))
     return list(
         session.scalars(
             select(Mosque)
-            .where(Mosque.website_url.is_not(None), Mosque.id.not_in(shared_url))
+            .where(
+                Mosque.website_url.is_not(None),
+                Mosque.website_url != "",
+                Mosque.id.not_in(shared_url),
+            )
             .order_by(Mosque.id)
         )
     )
