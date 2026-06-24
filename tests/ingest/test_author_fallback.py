@@ -54,7 +54,7 @@ def test_fallback_authors_when_single_shot_fails(engine, tmp_path):
     out = author_mosque(
         engine, "m1", harness=single, candidate_root=tmp_path, models=("cheap", "strong"),
         fallback=fallback, bespoke_root=tmp_path / "bespoke",
-        today=date(2026, 6, 1), horizon_days=5, fetcher=_fetcher,
+        today=date(2026, 6, 1), horizon_days=5, fetcher=_fetcher, feedback_retries=0,
     )
 
     assert out.outcome == "authored"

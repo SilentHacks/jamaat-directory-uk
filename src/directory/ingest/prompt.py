@@ -60,6 +60,10 @@ Return ONE JSON object and nothing else (no prose, no code fences):
       "sessions": [{{"label": "1st Jumu'ah", "time": "13:00"}}]
     }},
     "rules": {{"rules": [{{"prayer": "fajr", "fixed": "05:00"}}]}},
+    "widget": {{                      // required for shape "widget"
+      "platform": "<provider, e.g. mawaqit | masjidbox>",
+      "data_url": "<optional data/API URL>"
+    }},
     "paging": {{                      // optional: timetable split across months
       "mode": "url_template",         // dynamic per-month path
       "url_template": "https://x.org/timetable/{{year}}/{{month:02d}}"
@@ -109,7 +113,10 @@ Rules:
   begin time), set "value_kind": "offset" on that column. The offset resolves
   against "base_prayer"'s begin time on the same day (default: the column's own
   prayer) — so the table MUST also have a "begin" column for that base prayer.
-- Use "rules" only for fixed times; "widget" only for embedded prayer-time widgets.
+- Use "rules" only for fixed times. Use "widget" ONLY for a recognised embedded
+  provider (e.g. mawaqit, masjidbox) and you MUST include a "widget" spec with its
+  "platform". If you cannot identify the provider, do NOT emit shape "widget" (a
+  bare widget is rejected) — return your best html_table/html_repeated/rules.
 - Always PREFER a real HTML/structured timetable. Use "image" or "pdf" ONLY when
   the daily timetable in every candidate region is published solely as an image
   (JPG/PNG) or a PDF — common for monthly printable timetables — and no HTML
@@ -119,6 +126,24 @@ Rules:
   itself is read later; never invent a "rules" config to stand in for one.
 - Times are 24-hour "HH:MM".
 """
+
+
+def build_feedback_prompt(base_prompt: str, prev_reply: str, error: str) -> str:
+    """Re-prompt after a rejected config: show the model its previous reply and the
+    exact reason verification failed, and ask it to fix. The agent has tools, so it
+    can WebFetch the live page and confirm its selectors/indices actually select
+    times before answering — turning a one-shot guess into a checked correction."""
+    return (
+        base_prompt
+        + "\n\n--- YOUR PREVIOUS ATTEMPT WAS REJECTED ---\n"
+        + f"Reason: {error}\n\n"
+        + "Your previous reply was:\n"
+        + (prev_reply or "")[:2000]
+        + "\n\nFix it. You MAY use WebFetch to load the live page and verify that "
+        "your selectors/indices actually select the prayer times before answering "
+        "(a '0 rows' or 'no occurrences' rejection means they did not). Re-check the "
+        "ORIENTATION and shape. Return ONE corrected JSON object and nothing else."
+    )
 
 
 def build_author_prompt(

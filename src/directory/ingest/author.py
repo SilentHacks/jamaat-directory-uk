@@ -16,7 +16,11 @@ from directory.ingest.extractors.config_schema import SourceConfig
 from directory.ingest.fetch import fetch
 from directory.ingest.harness import AuthorHarness
 from directory.ingest.jsonscan import first_json_object
-from directory.ingest.prompt import build_author_prompt, build_browse_prompt
+from directory.ingest.prompt import (
+    build_author_prompt,
+    build_browse_prompt,
+    build_feedback_prompt,
+)
 from directory.ingest.runner import ExtractOutcome, extract_source
 from directory.models import Mosque
 
@@ -38,6 +42,7 @@ class _Stage:
     models: tuple[str, ...]
     prompt: Callable[[CandidateBundle], str]
     allow_bespoke: bool
+    feedback: bool  # re-prompt with the verify error on a rejected config
 
 
 @dataclass
@@ -159,6 +164,7 @@ def author_mosque(
     renderer=None,
     nav_renderer=None,
     allowed_statuses: frozenset[str] = frozenset({"candidate"}),
+    feedback_retries: int = 1,
 ) -> AuthorOutcome:
     with session_scope(engine) as s:
         src = repo.get_source(s, mosque_id)
@@ -174,10 +180,11 @@ def author_mosque(
             )
         return AuthorOutcome(mosque_id, "no_candidate")
 
-    stages = [_Stage(harness, models, build_author_prompt, allow_bespoke=False)]
+    stages = [_Stage(harness, models, build_author_prompt, allow_bespoke=False, feedback=True)]
     if fallback is not None:
         stages.append(
-            _Stage(fallback, (fallback_model,), build_browse_prompt, allow_bespoke=True)
+            _Stage(fallback, (fallback_model,), build_browse_prompt,
+                   allow_bespoke=True, feedback=False)
         )
 
     ctx = _Ctx(engine, bespoke_root, today, horizon_days, fetcher, renderer, nav_renderer)
@@ -185,15 +192,25 @@ def author_mosque(
     detail: str | None = None
 
     for stage in stages:
-        prompt = stage.prompt(bundle)
+        base_prompt = stage.prompt(bundle)
         for model in stage.models:
-            res = stage.harness.run(prompt, model=model)
-            outcome, detail = _attempt(
-                ctx, mosque_id, res, default_url, stage.harness.name, model,
-                allow_bespoke=stage.allow_bespoke,
-            )
-            if outcome is not None:
-                return outcome
+            prompt = base_prompt
+            # One corrective re-prompt per model on the feedback stage: a rejected
+            # config (wrong selectors/indices, invalid shape) is re-fed its own
+            # error so the tool-enabled agent can verify and fix it.
+            attempts = 1 + (feedback_retries if stage.feedback else 0)
+            for _ in range(attempts):
+                res = stage.harness.run(prompt, model=model)
+                outcome, detail = _attempt(
+                    ctx, mosque_id, res, default_url, stage.harness.name, model,
+                    allow_bespoke=stage.allow_bespoke,
+                )
+                if outcome is not None:
+                    return outcome
+                # A subprocess failure (timeout/crash) won't be fixed by feedback.
+                if not res.ok:
+                    break
+                prompt = build_feedback_prompt(base_prompt, res.text, detail or "")
 
     with session_scope(engine, write=True) as s:
         repo.set_source_state(
@@ -285,6 +302,7 @@ def run_authoring(
     fetcher=fetch,
     renderer=None,
     nav_renderer=None,
+    feedback_retries: int = 1,
 ) -> list[AuthorOutcome]:
     with session_scope(engine) as s:
         candidates = repo.candidate_sources(s)
@@ -302,7 +320,7 @@ def run_authoring(
             engine, mid, harness=harness, candidate_root=candidate_root, models=models,
             fallback=fallback, fallback_model=fallback_model, bespoke_root=bespoke_root,
             today=today, horizon_days=horizon_days, fetcher=fetcher, renderer=renderer,
-            nav_renderer=nav_renderer,
+            nav_renderer=nav_renderer, feedback_retries=feedback_retries,
         )
         if out.outcome in _FREE_OUTCOMES:
             budget.refund()
@@ -355,6 +373,7 @@ def run_reauthor(
     fetcher=fetch,
     renderer=None,
     nav_renderer=None,
+    feedback_retries: int = 1,
 ) -> list[AuthorOutcome]:
     """Model re-authoring of the ``needs_reauthor`` cohort (the paid recovery path;
     run ``run_verify_retry`` first for the free salvage). Only sources that still
@@ -377,6 +396,7 @@ def run_reauthor(
             fallback=fallback, fallback_model=fallback_model, bespoke_root=bespoke_root,
             today=today, horizon_days=horizon_days, fetcher=fetcher, renderer=renderer,
             nav_renderer=nav_renderer, allowed_statuses=frozenset({"needs_reauthor"}),
+            feedback_retries=feedback_retries,
         )
         if out.outcome in _FREE_OUTCOMES:
             budget.refund()

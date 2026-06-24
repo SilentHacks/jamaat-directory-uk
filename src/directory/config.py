@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     claude_code_fallback_model: str = "opus@high"
     claude_code_agentic_model: str = "opus@low"
     author_max_calls: int = 50
+    # Corrective re-prompts on the single-shot stage: a rejected config is re-fed
+    # its own verify error so the tool-enabled agent can fix it. 0 disables.
+    author_feedback_retries: int = 1
     author_page_budget: int = 8
     author_token_budget: int = 200_000
     bespoke_dir: Path = Path("data/bespoke")

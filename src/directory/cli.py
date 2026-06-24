@@ -265,6 +265,7 @@ def author(
                 fallback=fb, fallback_model=fb_model,
                 bespoke_root=settings.bespoke_dir, horizon_days=horizon_days,
                 renderer=renderer, nav_renderer=nav_renderer,
+                feedback_retries=settings.author_feedback_retries,
             )
         ]
     else:
@@ -276,6 +277,7 @@ def author(
             concurrency=concurrency or settings.author_concurrency,
             horizon_days=horizon_days,
             renderer=renderer, nav_renderer=nav_renderer,
+            feedback_retries=settings.author_feedback_retries,
         )
     for o in outcomes:
         typer.echo(f"{o.mosque_id}: outcome={o.outcome} model={o.model}")
@@ -342,6 +344,7 @@ def reauthor(
         max_calls=max_calls or settings.author_max_calls,
         concurrency=concurrency or settings.author_concurrency,
         horizon_days=horizon_days, renderer=renderer, nav_renderer=nav_renderer,
+        feedback_retries=settings.author_feedback_retries,
     )
     for o in outcomes:
         typer.echo(f"{o.mosque_id}: outcome={o.outcome} model={o.model}")

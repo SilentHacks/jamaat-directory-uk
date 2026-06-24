@@ -84,7 +84,7 @@ def test_escalates_to_strong_when_cheap_output_is_garbage(engine, tmp_path):
 
     out = author_mosque(engine, "m1", harness=harness, candidate_root=tmp_path,
                         models=("cheap", "strong"), today=date(2026, 6, 1), horizon_days=5,
-                        fetcher=_fetcher)
+                        fetcher=_fetcher, feedback_retries=0)
 
     assert out.outcome == "authored"
     assert out.model == "strong"
@@ -98,7 +98,7 @@ def test_all_models_fail_marks_needs_reauthor(engine, tmp_path):
 
     out = author_mosque(engine, "m1", harness=harness, candidate_root=tmp_path,
                         models=("cheap", "strong"), today=date(2026, 6, 1), horizon_days=5,
-                        fetcher=_fetcher)
+                        fetcher=_fetcher, feedback_retries=0)
 
     assert out.outcome == "needs_reauthor"
     assert harness.calls == ["cheap", "strong"]
