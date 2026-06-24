@@ -1,7 +1,33 @@
+import re
+
 from directory.domain import Prayer
 from directory.ingest.discover import CandidateBundle
 
 _PRAYERS = ", ".join(p.value for p in Prayer)
+
+_CLOCK = re.compile(r"\b\d{1,2}[:.]\d{2}\b")
+
+
+def _window_region(html: str, budget: int, *, margin: int = 800) -> str:
+    """Return a ``budget``-char slice of ``html`` centred on the densest cluster of
+    clock times, so a timetable buried past the budget (after a long header/nav) is
+    still surfaced. Falls back to the leading slice when no clock times are present.
+
+    ``strip_to_region`` does not always isolate the table tightly — the first prayer
+    time can sit 10k+ chars in — and a fixed leading slice then cuts it off."""
+    if len(html) <= budget:
+        return html
+    positions = [m.start() for m in _CLOCK.finditer(html)]
+    if not positions:
+        return html[:budget]
+    best_start, best_count = 0, -1
+    for p in positions:
+        start = max(0, p - margin)
+        end = start + budget
+        count = sum(1 for q in positions if start <= q < end)
+        if count > best_count:
+            best_count, best_start = count, start
+    return html[best_start : best_start + budget]
 
 _SCHEMA_HINT = f"""\
 Return ONE JSON object and nothing else (no prose, no code fences):
@@ -96,18 +122,22 @@ Rules:
 
 
 def build_author_prompt(
-    bundle: CandidateBundle, *, max_region_chars: int = 4000, max_candidates: int = 3
+    bundle: CandidateBundle, *, max_region_chars: int = 6000, max_candidates: int = 5
 ) -> str:
     parts = [
         "You map a UK mosque's congregational (jamaah) prayer timetable into an "
         "extraction config.",
         f"Mosque website: {bundle.base_url}",
         "",
+        "Each region below is a windowed excerpt centred on the prayer times. If a "
+        "region is clearly truncated or insufficient, you MAY use the WebFetch tool "
+        "to retrieve the candidate's live page before authoring the config.",
+        "",
         "Candidate page regions (most likely first):",
     ]
     for i, c in enumerate(bundle.candidates[:max_candidates], start=1):
         parts.append(f"\n--- candidate {i}: {c.url} ---")
-        parts.append(c.region_html[:max_region_chars])
+        parts.append(_window_region(c.region_html, max_region_chars))
     parts.append("")
     parts.append(_SCHEMA_HINT)
     return "\n".join(parts)
