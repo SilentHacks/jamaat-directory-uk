@@ -255,12 +255,15 @@ def set_source_state(
     authored_by: str | None = None,
     authored_at: str | None = None,
     flags: list[str] | None = None,
+    requires_js: bool | None = None,
 ) -> None:
     src = session.get(Source, source_id)
     if src is None:
         return
     if triage_status is not None:
         src.triage_status = triage_status
+    if requires_js is not None:
+        src.requires_js = 1 if requires_js else 0
     if flags is not None:
         src.flags = json.dumps(flags)
     if confidence is not None:

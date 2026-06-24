@@ -126,6 +126,20 @@ def _attempt(
     # there is nothing for a stronger model to improve — do not escalate.
     if result.triage_status in {"authored", "review", "deferred_media"}:
         return AuthorOutcome(mosque_id, result.triage_status, model), None
+
+    # The config is stored requires_js=False, so the verify above fetched the page
+    # statically. A JS-rendered timetable then yields 0 rows even though the config
+    # is correct. Retry the verify once with rendering before flagging the source.
+    if ctx.renderer is not None:
+        with session_scope(ctx.engine, write=True) as s:
+            repo.set_source_state(s, mosque_id, requires_js=True)
+        result = extract_source(
+            ctx.engine, mosque_id, today=ctx.today, horizon_days=ctx.horizon_days,
+            fetcher=ctx.fetcher, renderer=ctx.renderer, nav_renderer=ctx.nav_renderer,
+        )
+        if result.triage_status in {"authored", "review", "deferred_media"}:
+            return AuthorOutcome(mosque_id, result.triage_status, model), None
+
     return None, result.error or "gates rejected the authored config"
 
 
