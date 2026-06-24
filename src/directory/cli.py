@@ -147,8 +147,15 @@ def discover(
         True, "--render-js/--no-render-js",
         help="Re-render JS-shell pages with a headless browser after a static miss",
     ),
+    force: bool = typer.Option(  # noqa: B008
+        False, "--force",
+        help="Re-discover even sources that already hold a config (overwrites it)",
+    ),
 ) -> None:
-    """Run the deterministic discovery funnel (liveness → platform → gather)."""
+    """Run the deterministic discovery funnel (liveness → platform → gather).
+
+    Sources that already hold a config are preserved (skipped) unless --force, so
+    a re-run never wipes a flaky-but-correct config a verify-retry could salvage."""
     settings = Settings()
     engine = make_engine(settings.database_url)
     root = settings.candidate_dir
@@ -159,13 +166,13 @@ def discover(
         outcomes = [
             discover_mosque(engine, mosque_id, candidate_root=root,
                             horizon_days=horizon_days, blocklist=blocklist, renderer=renderer,
-                            nav_renderer=nav_renderer)
+                            nav_renderer=nav_renderer, force=force)
         ]
     else:
         outcomes = run_discovery(
             engine, candidate_root=root, horizon_days=horizon_days, blocklist=blocklist,
             concurrency=concurrency or settings.discover_concurrency, renderer=renderer,
-            nav_renderer=nav_renderer,
+            nav_renderer=nav_renderer, force=force,
         )
     for o in outcomes:
         typer.echo(f"{o.mosque_id}: outcome={o.outcome} platform={o.platform}")

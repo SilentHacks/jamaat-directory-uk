@@ -3,7 +3,7 @@ import httpx
 from directory import repository as repo
 from directory.db import session_scope
 from directory.ingest.discover import discover_mosque, run_discovery
-from directory.models import Mosque
+from directory.models import Mosque, Source
 
 WP_HTML = """
 <html><head><meta name="generator" content="WordPress"></head><body>
@@ -198,6 +198,53 @@ def test_blocklisted_after_redirect_short_circuits(engine, tmp_path):
     assert fetch_calls == []  # no fetch, no AI
     with session_scope(engine) as s:
         assert repo.get_source(s, "fb").triage_status == "blocklisted"
+
+
+def test_discover_preserves_existing_config(engine, tmp_path):
+    """Re-running discovery on a source that already holds a config must not fetch
+    or wipe it — the config-clobber footgun. It short-circuits to 'skipped'."""
+    _mosque(engine, "keep", "https://keep.example/")
+    with session_scope(engine) as s:
+        s.add(Source(id="keep", mosque_id="keep", url="https://keep.example/t",
+                     shape="html_table", platform="generic_table",
+                     config='{"shape":"html_table"}', triage_status="needs_reauthor"))
+
+    fetch_calls = []
+
+    def _spy(url, **kwargs):
+        from directory.ingest.fetch import FetchResult
+        fetch_calls.append(url)
+        return FetchResult(url, 200, WP_HTML, "h")
+
+    out = discover_mosque(engine, "keep", fetcher=_spy, client=_live_client(),
+                          candidate_root=tmp_path)
+
+    assert out.outcome == "skipped"
+    assert out.platform == "generic_table"
+    assert fetch_calls == []  # no fetch, no liveness probe, config untouched
+    with session_scope(engine) as s:
+        src = repo.get_source(s, "keep")
+        assert src.config == '{"shape":"html_table"}'
+        assert src.triage_status == "needs_reauthor"
+
+
+def test_discover_force_overwrites_existing_config(engine, tmp_path):
+    from datetime import date
+
+    _mosque(engine, "force", "https://force.example/")
+    with session_scope(engine) as s:
+        s.add(Source(id="force", mosque_id="force", url="https://force.example/old",
+                     shape="html_table", config='{"old":true}',
+                     triage_status="needs_reauthor"))
+    fetcher = _fetcher_for({"https://force.example/": WP_HTML})
+
+    out = discover_mosque(engine, "force", fetcher=fetcher, client=_live_client(),
+                          candidate_root=tmp_path, today=date(2026, 6, 1),
+                          horizon_days=20, force=True)
+
+    assert out.outcome in {"authored", "review"}  # re-discovered despite prior config
+    with session_scope(engine) as s:
+        assert repo.get_source(s, "force").config != '{"old":true}'
 
 
 def test_run_discovery_covers_all(engine, tmp_path):

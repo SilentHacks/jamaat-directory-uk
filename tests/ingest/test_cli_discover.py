@@ -22,6 +22,12 @@ def test_discover_exposes_concurrency_flag():
     assert "--concurrency" in result.output
 
 
+def test_discover_exposes_force_flag():
+    result = runner.invoke(app, ["discover", "--help"])
+    assert result.exit_code == 0
+    assert "--force" in result.output
+
+
 def test_validate_and_extract_expose_concurrency_flag():
     for cmd in ("validate-websites", "extract"):
         result = runner.invoke(app, [cmd, "--help"])

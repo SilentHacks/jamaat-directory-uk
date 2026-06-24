@@ -399,10 +399,24 @@ def discover_mosque(
     blocklist: frozenset[str] | None = None,
     renderer: Callable[[str], str] | None = None,
     nav_renderer=None,
+    force: bool = False,
 ) -> DiscoverOutcome:
     with session_scope(engine) as s:
         mosque = repo.get_mosque(s, mosque_id)
         website = mosque.website_url if mosque else None
+        existing = repo.get_source(s, mosque_id)
+        has_config = existing is not None and existing.config is not None
+        existing_platform = existing.platform if existing else None
+
+    # Anti-clobber guard: never re-discover a source that already holds a config.
+    # A re-run resets the source to `candidate` and nulls its config (below),
+    # destroying a flaky-but-correct config that a free verify-retry could have
+    # salvaged. `force=True` opts into the overwrite. Short-circuits before any
+    # network so a preserve costs nothing.
+    if has_config and not force:
+        return DiscoverOutcome(
+            mosque_id, "skipped", existing_platform, detail="existing config preserved"
+        )
     if not website:
         return DiscoverOutcome(mosque_id, "no_website", None)
 
@@ -518,6 +532,7 @@ def run_discovery(
     concurrency: int = 16,
     renderer: Callable[[str], str] | None = None,
     nav_renderer=None,
+    force: bool = False,
 ) -> list[DiscoverOutcome]:
     with session_scope(engine) as s:
         ids = [m.id for m in repo.mosques_for_discovery(s)]
@@ -534,6 +549,7 @@ def run_discovery(
             blocklist=blocklist,
             renderer=renderer,
             nav_renderer=nav_renderer,
+            force=force,
         )
 
     # ids come back id-ordered; pool.map preserves order → deterministic results.
