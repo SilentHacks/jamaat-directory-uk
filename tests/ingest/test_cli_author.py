@@ -2,7 +2,12 @@ from typer.testing import CliRunner
 
 from directory import cli
 from directory.ingest.author import AuthorOutcome
-from directory.ingest.harness import OpenCodeAgenticHarness
+from directory.ingest.harness import (
+    ClaudeCodeAgenticHarness,
+    ClaudeCodeHarness,
+    OpenCodeAgenticHarness,
+    OpenCodeHarness,
+)
 
 runner = CliRunner()
 
@@ -33,7 +38,7 @@ def test_author_one_invokes_author_mosque(monkeypatch):
     assert "m1: outcome=authored" in result.stdout
 
 
-def test_author_agentic_flag_passes_fallback(monkeypatch, tmp_path):
+def test_author_defaults_to_claude_code_opus_low(monkeypatch, tmp_path):
     import directory.cli as cli
 
     captured = {}
@@ -45,13 +50,73 @@ def test_author_agentic_flag_passes_fallback(monkeypatch, tmp_path):
     monkeypatch.setenv("DIRECTORY_DB_PATH", str(tmp_path / "t.db"))
     monkeypatch.setattr(cli, "run_authoring", fake_run_authoring)
 
-    result = runner.invoke(cli.app, ["init-db"])
-    assert result.exit_code == 0
-    result = runner.invoke(cli.app, ["author", "--agentic"])
+    runner.invoke(cli.app, ["init-db"])
+    result = runner.invoke(cli.app, ["author"])
     assert result.exit_code == 0
 
-    assert isinstance(captured["fallback"], OpenCodeAgenticHarness)
+    assert isinstance(captured["harness"], ClaudeCodeHarness)
+    assert captured["models"] == ("opus@low",)  # single low-effort model by default
+    assert captured["fallback"] is None  # no agentic, no high-effort fallback
+
+
+def test_author_fallback_flag_appends_high_effort(monkeypatch, tmp_path):
+    import directory.cli as cli
+
+    captured = {}
+    monkeypatch.setenv("DIRECTORY_DB_PATH", str(tmp_path / "t.db"))
+    monkeypatch.setattr(cli, "run_authoring", lambda engine, **kw: captured.update(kw) or [])
+
+    runner.invoke(cli.app, ["init-db"])
+    result = runner.invoke(cli.app, ["author", "--fallback"])
+    assert result.exit_code == 0
+    assert captured["models"] == ("opus@low", "opus@high")
+
+
+def test_author_agentic_uses_claude_code_browse_at_low_effort(monkeypatch, tmp_path):
+    import directory.cli as cli
+
+    captured = {}
+    monkeypatch.setenv("DIRECTORY_DB_PATH", str(tmp_path / "t.db"))
+    monkeypatch.setattr(cli, "run_authoring", lambda engine, **kw: captured.update(kw) or [])
+
+    runner.invoke(cli.app, ["init-db"])
+    result = runner.invoke(cli.app, ["author", "--agentic"])
+    assert result.exit_code == 0
+    assert isinstance(captured["fallback"], ClaudeCodeAgenticHarness)
+    assert captured["fallback_model"] == "opus@low"
     assert captured["bespoke_root"] is not None
+
+
+def test_author_opencode_harness_uses_legacy_ladder(monkeypatch, tmp_path):
+    import directory.cli as cli
+
+    captured = {}
+    monkeypatch.setenv("DIRECTORY_DB_PATH", str(tmp_path / "t.db"))
+    monkeypatch.setattr(cli, "run_authoring", lambda engine, **kw: captured.update(kw) or [])
+
+    runner.invoke(cli.app, ["init-db"])
+    result = runner.invoke(cli.app, ["author", "--harness", "opencode", "--agentic"])
+    assert result.exit_code == 0
+    assert isinstance(captured["harness"], OpenCodeHarness)
+    assert isinstance(captured["fallback"], OpenCodeAgenticHarness)
+    assert len(captured["models"]) == 2  # cheap → strong ladder
+
+
+def test_reauthor_no_verify_only_invokes_model_path(monkeypatch, tmp_path):
+    import directory.cli as cli
+
+    captured = {}
+    monkeypatch.setenv("DIRECTORY_DB_PATH", str(tmp_path / "t.db"))
+    monkeypatch.setattr(cli, "load_bespoke", lambda root: [])
+    monkeypatch.setattr(cli, "run_reauthor", lambda engine, **kw: captured.update(kw) or
+                        [AuthorOutcome("m1", "authored", "opus@low")])
+
+    runner.invoke(cli.app, ["init-db"])
+    result = runner.invoke(cli.app, ["reauthor", "--no-verify-only"])
+    assert result.exit_code == 0
+    assert isinstance(captured["harness"], ClaudeCodeHarness)
+    assert captured["models"] == ("opus@low",)
+    assert "recovered 1" in result.stdout
 
 
 def test_reauthor_invokes_verify_retry(monkeypatch, tmp_path):

@@ -144,11 +144,12 @@ def author_mosque(
     fetcher=fetch,
     renderer=None,
     nav_renderer=None,
+    allowed_statuses: frozenset[str] = frozenset({"candidate"}),
 ) -> AuthorOutcome:
     with session_scope(engine) as s:
         src = repo.get_source(s, mosque_id)
         status = src.triage_status if src else None
-    if src is None or status != "candidate":
+    if src is None or status not in allowed_statuses:
         return AuthorOutcome(mosque_id, "skipped", detail=f"status={status}")
 
     bundle = CandidateBundle.load(mosque_id, candidate_root)
@@ -295,4 +296,82 @@ def run_authoring(
 
     with ThreadPoolExecutor(max_workers=max(1, concurrency)) as pool:
         results = list(pool.map(_worker, ordered_ids))
+    return [o for o in results if o is not None]
+
+
+@dataclass
+class _SourceSnapshot:
+    url: str | None
+    platform: str | None
+    shape: str | None
+    config: str | None
+    requires_js: bool
+
+
+def _snapshot_source(engine, mosque_id: str) -> _SourceSnapshot | None:
+    with session_scope(engine) as s:
+        src = repo.get_source(s, mosque_id)
+        if src is None:
+            return None
+        return _SourceSnapshot(src.url, src.platform, src.shape, src.config, bool(src.requires_js))
+
+
+def _restore_source(engine, mosque_id: str, snap: _SourceSnapshot) -> None:
+    with session_scope(engine, write=True) as s:
+        repo.create_or_update_source(
+            s, source_id=mosque_id, mosque_id=mosque_id, url=snap.url,
+            platform=snap.platform, shape=snap.shape, config=snap.config,
+            requires_js=snap.requires_js, triage_status="needs_reauthor",
+        )
+
+
+def run_reauthor(
+    engine,
+    *,
+    harness: AuthorHarness,
+    candidate_root: Path,
+    models: tuple[str, ...],
+    fallback: AuthorHarness | None = None,
+    fallback_model: str = "agentic",
+    bespoke_root: Path | None = None,
+    max_calls: int = 50,
+    concurrency: int = 4,
+    today: date | None = None,
+    horizon_days: int = 60,
+    fetcher=fetch,
+    renderer=None,
+    nav_renderer=None,
+) -> list[AuthorOutcome]:
+    """Model re-authoring of the ``needs_reauthor`` cohort (the paid recovery path;
+    run ``run_verify_retry`` first for the free salvage). Only sources that still
+    have a candidate bundle on disk are eligible — a deterministic-discovery source
+    has no bundle to prompt from and is left untouched. The prior config is
+    snapshotted and restored if the attempt ends back in ``needs_reauthor``, so a
+    non-deterministic model can never discard a config it failed to improve on."""
+    with session_scope(engine) as s:
+        ids = [src.id for src in repo.reauthor_sources(s)]
+    ids = [mid for mid in ids if CandidateBundle.load(mid, candidate_root) is not None]
+
+    budget = Budget(max_calls)
+
+    def _worker(mid: str) -> AuthorOutcome | None:
+        if not budget.try_reserve():
+            return None
+        snap = _snapshot_source(engine, mid)
+        out = author_mosque(
+            engine, mid, harness=harness, candidate_root=candidate_root, models=models,
+            fallback=fallback, fallback_model=fallback_model, bespoke_root=bespoke_root,
+            today=today, horizon_days=horizon_days, fetcher=fetcher, renderer=renderer,
+            nav_renderer=nav_renderer, allowed_statuses=frozenset({"needs_reauthor"}),
+        )
+        if out.outcome in _FREE_OUTCOMES:
+            budget.refund()
+        # The model failed to improve on what we had — put the prior config back so
+        # a flaky-but-correct config survives a bad re-author roll.
+        if out.outcome == "needs_reauthor" and snap is not None:
+            _restore_source(engine, mid, snap)
+        return out
+
+    with ThreadPoolExecutor(max_workers=max(1, concurrency)) as pool:
+        results = list(pool.map(_worker, ids))
     return [o for o in results if o is not None]

@@ -4,9 +4,11 @@ from datetime import date
 
 from directory import repository as repo
 from directory.db import session_scope
-from directory.ingest.author import run_verify_retry
+from directory.ingest.author import run_reauthor, run_verify_retry
+from directory.ingest.discover import Candidate, CandidateBundle
 from directory.ingest.fetch import FetchResult
 from directory.models import Mosque, Source
+from tests.conftest import FakeHarness
 
 TABLE_HTML = (
     "<table class='t'><tr><th>Date</th><th>Fajr</th><th>Dhuhr</th><th>Asr</th>"
@@ -74,3 +76,64 @@ def test_verify_retry_leaves_genuine_failure_as_needs_reauthor(engine):
         src = repo.get_source(s, "bad")
         assert src.triage_status == "needs_reauthor"
         assert src.config == GOOD_CONFIG  # config retained for a future retry
+
+
+def _good_output(url):
+    return json.dumps({"url": url, "config": json.loads(GOOD_CONFIG)})
+
+
+def _bad_valid_output(url):
+    cfg = json.loads(GOOD_CONFIG)
+    cfg["grid"]["table_selector"] = "table.nope"  # valid schema, matches nothing
+    return json.dumps({"url": url, "config": cfg})
+
+
+def _reauthor_candidate(engine, mid, root, *, config):
+    url = f"https://{mid}.example/prayer-times"
+    with session_scope(engine) as s:
+        s.add(Mosque(id=mid, name=mid, city="X", lat=52.0, lng=-1.0,
+                     website_url=f"https://{mid}.example/"))
+        s.add(Source(id=mid, mosque_id=mid, url=url, shape="html_table",
+                     config=config, triage_status="needs_reauthor"))
+    CandidateBundle(mid, f"https://{mid}.example/",
+                    [Candidate(url, 9.0, TABLE_HTML, "Fajr")]).save(root)
+    return url
+
+
+def test_run_reauthor_promotes_with_model(engine, tmp_path):
+    url = _reauthor_candidate(engine, "m1", tmp_path, config='{"shape":"html_table"}')
+    harness = FakeHarness(_good_output(url))
+    outs = run_reauthor(engine, harness=harness, candidate_root=tmp_path,
+                        models=("opus@low",), today=date(2026, 6, 1), horizon_days=5,
+                        fetcher=_fetcher)
+    assert [o.outcome for o in outs] == ["authored"]
+    assert harness.calls == ["opus@low"]
+
+
+def test_run_reauthor_restores_prior_config_on_failure(engine, tmp_path):
+    """A non-deterministic model that regenerates a worse (valid-but-rejected)
+    config must not be allowed to discard the prior config."""
+    url = _reauthor_candidate(engine, "m1", tmp_path, config=GOOD_CONFIG)
+    harness = FakeHarness(_bad_valid_output(url))
+    outs = run_reauthor(engine, harness=harness, candidate_root=tmp_path,
+                        models=("opus@low",), today=date(2026, 6, 1), horizon_days=5,
+                        fetcher=_fetcher)
+    assert [o.outcome for o in outs] == ["needs_reauthor"]
+    with session_scope(engine) as s:
+        assert repo.get_source(s, "m1").config == GOOD_CONFIG  # prior config restored
+
+
+def test_run_reauthor_skips_sources_without_a_bundle(engine, tmp_path):
+    """A deterministic-discovery source has no candidate bundle to prompt from;
+    model re-author leaves it untouched (no model call, no demotion)."""
+    _src(engine, "nb", GOOD_CONFIG)  # no bundle saved on disk
+    harness = FakeHarness("garbage")
+    outs = run_reauthor(engine, harness=harness, candidate_root=tmp_path,
+                        models=("opus@low",), today=date(2026, 6, 1), horizon_days=5,
+                        fetcher=_fetcher)
+    assert outs == []
+    assert harness.calls == []
+    with session_scope(engine) as s:
+        src = repo.get_source(s, "nb")
+        assert src.triage_status == "needs_reauthor"
+        assert src.config == GOOD_CONFIG

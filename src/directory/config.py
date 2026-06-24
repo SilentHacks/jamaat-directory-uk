@@ -11,8 +11,17 @@ class Settings(BaseSettings):
     admin_api_key: str | None = None
     snapshot_horizon_days: int = 45
     candidate_dir: Path = Path("data/candidates")
+    # Default authoring backend. "claude-code" drives `claude -p`; "opencode" keeps
+    # the legacy OpenCode ladder (author_model_cheap → author_model_strong).
+    author_harness: str = "claude-code"
     author_model_cheap: str = "anthropic/claude-haiku-4-5"
     author_model_strong: str = "anthropic/claude-opus-4-8"
+    # Claude Code model specs carry an optional @effort suffix (low|medium|high|...).
+    # Default is Opus 4.8 at low effort; the high-effort fallback is opt-in
+    # (--fallback); agentic browsing runs at low effort.
+    claude_code_model: str = "opus@low"
+    claude_code_fallback_model: str = "opus@high"
+    claude_code_agentic_model: str = "opus@low"
     author_max_calls: int = 50
     author_page_budget: int = 8
     author_token_budget: int = 200_000
