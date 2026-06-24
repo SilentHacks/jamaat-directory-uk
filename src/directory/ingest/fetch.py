@@ -1,7 +1,9 @@
 import hashlib
 import re
+import threading
 import time
 from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import dataclass
 
 import httpx
@@ -9,6 +11,35 @@ import httpx
 from directory.ingest.extractors.config_schema import NavSpec
 
 USER_AGENT = "jamaat-directory-uk/0.1 (+https://github.com/SilentHacks/jamaat-directory-uk)"
+
+# Global cap on concurrent headless-browser renders. Discovery runs many workers
+# in parallel, but each render_playwright call launches its own chromium; too many
+# at once causes render timeouts. This semaphore bounds the live browser count
+# (sized from Settings.render_concurrency) while leaving static fetches parallel.
+_render_semaphore: threading.BoundedSemaphore | None = None
+_render_sem_lock = threading.Lock()
+
+
+def _render_semaphore_for() -> threading.BoundedSemaphore:
+    global _render_semaphore
+    if _render_semaphore is None:
+        with _render_sem_lock:
+            if _render_semaphore is None:
+                from directory.config import Settings
+                n = max(1, Settings().render_concurrency)
+                _render_semaphore = threading.BoundedSemaphore(n)
+    return _render_semaphore
+
+
+@contextmanager
+def _render_slot():
+    """Hold one of the limited render slots for the duration of a browser session."""
+    sem = _render_semaphore_for()
+    sem.acquire()
+    try:
+        yield
+    finally:
+        sem.release()
 
 # A populated timetable shows several clock times; one stray time (a "next prayer"
 # countdown) does not. Matches both "13:30" and dot-separated "13.30".
@@ -128,7 +159,7 @@ def render_playwright(url: str, *, timeout_ms: int = 15000, settle_ms: int = 800
     # lazy: never imported by default
     from playwright.sync_api import sync_playwright
 
-    with sync_playwright() as p:
+    with _render_slot(), sync_playwright() as p:
         browser = p.chromium.launch()
         try:
             page = browser.new_page()
@@ -167,7 +198,7 @@ def render_playwright_nav(
     gathered so far — partial months are tolerated upstream, never fatal."""
     from playwright.sync_api import sync_playwright
 
-    with sync_playwright() as p:
+    with _render_slot(), sync_playwright() as p:
         browser = p.chromium.launch()
         try:
             page = browser.new_page()

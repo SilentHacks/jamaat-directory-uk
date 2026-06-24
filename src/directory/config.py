@@ -29,6 +29,11 @@ class Settings(BaseSettings):
     blocklist_path: Path | None = None
     discover_concurrency: int = 16
     author_concurrency: int = 4
+    # Hard cap on concurrent headless-browser (Playwright) renders, independent of
+    # discover_concurrency: static httpx fetches stay parallel, but only this many
+    # chromium instances launch at once. Too many concurrent browsers caused render
+    # timeouts. Set to 1 to render synchronously.
+    render_concurrency: int = 2
 
     @property
     def database_url(self) -> str:
