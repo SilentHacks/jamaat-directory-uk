@@ -27,6 +27,20 @@ uv run directory curate                                      # apply duplicate o
 uv run directory serve                                       # http://127.0.0.1:8000
 ```
 
+### Fresh bring-up (one command)
+
+`scripts/bringup.sh` clears the DB and runs every **free, deterministic** stage
+end to end — seed → curate → liveness → discovery — then prints the triage
+breakdown. It stops before the paid AI stages and prints them as next steps.
+
+```bash
+scripts/bringup.sh                       # reuses data/seed/mosques.json
+scripts/bringup.sh mib_uk_ie_mosques.json  # regenerate the seed from a raw export first
+```
+
+The cleaned seed is gitignored, so a fresh clone passes the raw upstream export
+once; later runs reuse the generated `data/seed/mosques.json`.
+
 ### Daily extract (deterministic, zero AI)
 
 Once sources are authored (Phase 3), refresh the rolling timetable horizon:
@@ -92,19 +106,39 @@ for the Phase-4 AI authoring step.
 ### Authoring (single-shot, agent harness)
 
 For mosques the deterministic funnel left as `candidate`, hand the cached
-candidate bundle to an agent harness to author a `SourceConfig`. The harness is
-pluggable (default: the OpenCode CLI; others register via `register_harness`).
-Every authored config is verified through the same extraction gates before it
-activates — the harness only fills configs the engine already runs.
+candidate bundle to an agent harness to author a `SourceConfig`. The default
+backend is **Claude Code** driving **Opus 4.8 at low effort** as a single model;
+a high-effort retry is opt-in (`--fallback`). Every authored config is verified
+through the same extraction gates before it activates — the harness only fills
+configs the engine already runs.
 
 ```bash
-directory author                    # author the candidate backlog (cheap→strong)
-directory author --mosque-id m1     # one mosque
-directory author --max-calls 20     # cap harness calls this run (resumable)
+directory author                       # single-shot the backlog (Opus 4.8 @low)
+directory author --concurrency 1       # serialize to spare model usage; resumable
+directory author --max-calls 20        # cap harness calls this run
+directory author --fallback            # add the high-effort (@high) retry
+directory author --harness opencode    # legacy OpenCode cheap→strong ladder
 ```
 
-Configure via env: `DIRECTORY_AUTHOR_HARNESS`, `DIRECTORY_AUTHOR_MODEL_CHEAP`,
-`DIRECTORY_AUTHOR_MODEL_STRONG`, `DIRECTORY_AUTHOR_MAX_CALLS`.
+Model specs carry effort as an `@suffix` (`opus@low`, `opus@high`). Configure via
+env: `DIRECTORY_AUTHOR_HARNESS` (default `claude-code`), `DIRECTORY_CLAUDE_CODE_MODEL`,
+`DIRECTORY_CLAUDE_CODE_FALLBACK_MODEL`, `DIRECTORY_AUTHOR_MAX_CALLS`.
+
+### Recovering the `needs_reauthor` cohort
+
+```bash
+directory reauthor                          # FREE: re-extract retained configs, no model call
+directory reauthor --no-verify-only         # model re-author of the remainder (config-preserving)
+directory reauthor --no-verify-only --agentic
+```
+
+`reauthor` (default `--verify-only`) re-runs the daily extract on each
+`needs_reauthor` source's retained config with **zero** model calls — it salvages
+render-flakiness false-negatives. Run it before any paid batch. `--no-verify-only`
+re-authors via the model; a failed attempt restores the prior config, so a
+non-deterministic model never discards a config it failed to improve on.
+Re-running `discover` preserves any source that already holds a config (use
+`discover --force` to overwrite).
 
 ### Review queue
 
@@ -116,9 +150,9 @@ query param; run it behind Caddy/Cloudflare in production.
 
 ### Agentic fallback (stage 4) + bespoke shape
 
-When single-shot authoring (cheap→strong) cannot map a `candidate`, enable the
-stage-4 agentic browsing fallback — a browsing `AuthorHarness` (default: the
-OpenCode `browse` agent) that navigates the live site under a per-site
+When single-shot authoring cannot map a `candidate`, enable the stage-4 agentic
+browsing fallback — a browsing `AuthorHarness` (default: Claude Code at
+Opus 4.8 @low with the web tools pre-approved) that navigates the live site under a per-site
 page/token budget (a best-effort directive to the agent; only the subprocess
 timeout is a hard ceiling) and emits the **same** `SourceConfig`, or, for a genuinely
 unique layout, a `bespoke` Python extractor module.
