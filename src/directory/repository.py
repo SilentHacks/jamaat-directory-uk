@@ -167,6 +167,23 @@ def authored_sources(session: Session) -> list[Source]:
     return list(session.scalars(stmt))
 
 
+def reauthor_sources(session: Session) -> list[Source]:
+    """Sources flagged for re-authoring that still hold a config — the targets of
+    a free verify-retry (re-run extraction with no model call) and of model
+    re-authoring. A needs_reauthor source whose config was already nulled has
+    nothing to retry, so it is excluded."""
+    return list(
+        session.scalars(
+            select(Source)
+            .where(
+                Source.triage_status == "needs_reauthor",
+                Source.config.is_not(None),
+            )
+            .order_by(Source.id)
+        )
+    )
+
+
 def deferred_media_sources(session: Session) -> list[Source]:
     """Sources whose timetable is an image/PDF awaiting the (deferred) media
     extraction phase — its entry point for picking up the backlog."""

@@ -1,0 +1,76 @@
+# tests/ingest/test_reauthor.py
+import json
+from datetime import date
+
+from directory import repository as repo
+from directory.db import session_scope
+from directory.ingest.author import run_verify_retry
+from directory.ingest.fetch import FetchResult
+from directory.models import Mosque, Source
+
+TABLE_HTML = (
+    "<table class='t'><tr><th>Date</th><th>Fajr</th><th>Dhuhr</th><th>Asr</th>"
+    "<th>Maghrib</th><th>Isha</th></tr>"
+    "<tr><td>1 June</td><td>05:00</td><td>13:30</td><td>18:30</td><td>21:30</td><td>23:00</td></tr>"
+    "<tr><td>2 June</td><td>05:02</td><td>13:31</td><td>18:31</td><td>21:31</td><td>23:01</td></tr>"
+    "</table>"
+)
+
+GOOD_CONFIG = json.dumps({
+    "shape": "html_table",
+    "grid": {"table_selector": "table.t", "date": {"index": 0}, "columns": [
+        {"kind": "jamaah", "prayer": "fajr", "index": 1},
+        {"kind": "jamaah", "prayer": "dhuhr", "index": 2},
+        {"kind": "jamaah", "prayer": "asr", "index": 3},
+        {"kind": "jamaah", "prayer": "maghrib", "index": 4},
+        {"kind": "jamaah", "prayer": "isha", "index": 5}]},
+})
+
+
+def _src(engine, mid, config, status="needs_reauthor"):
+    with session_scope(engine) as s:
+        s.add(Mosque(id=mid, name=mid, lat=52.0, lng=-1.0,
+                     website_url=f"https://{mid}.example/"))
+        s.add(Source(id=mid, mosque_id=mid, url=f"https://{mid}.example/t",
+                     shape="html_table", config=config, triage_status=status))
+
+
+def _fetcher(url, **kwargs):
+    return FetchResult(url, 200, TABLE_HTML, "h", error=None)
+
+
+def test_verify_retry_promotes_salvageable_config(engine):
+    """A correct config that previously failed (e.g. a flaky fetch) is promoted
+    on a clean re-extraction — no model call."""
+    _src(engine, "m1", GOOD_CONFIG)
+    outs = run_verify_retry(engine, today=date(2026, 6, 1), horizon_days=5, fetcher=_fetcher)
+    assert [o.triage_status for o in outs] == ["authored"]
+    with session_scope(engine) as s:
+        assert repo.get_source(s, "m1").triage_status == "authored"
+
+
+def test_verify_retry_skips_configless_sources(engine):
+    """A needs_reauthor source whose config was nulled is not a verify-retry
+    target — there is nothing to re-extract."""
+    with session_scope(engine) as s:
+        s.add(Mosque(id="nc", name="nc", lat=52.0, lng=-1.0))
+        s.add(Source(id="nc", mosque_id="nc", url="https://nc.example/",
+                     config=None, triage_status="needs_reauthor"))
+    outs = run_verify_retry(engine, today=date(2026, 6, 1), horizon_days=5, fetcher=_fetcher)
+    assert outs == []
+
+
+def test_verify_retry_leaves_genuine_failure_as_needs_reauthor(engine):
+    """A config that still does not extract stays needs_reauthor — verify-retry
+    never demotes or wipes it."""
+    _src(engine, "bad", GOOD_CONFIG)
+
+    def _empty(url, **kwargs):
+        return FetchResult(url, 200, "<html><body>no table</body></html>", "h", error=None)
+
+    outs = run_verify_retry(engine, today=date(2026, 6, 1), horizon_days=5, fetcher=_empty)
+    assert [o.triage_status for o in outs] == ["needs_reauthor"]
+    with session_scope(engine) as s:
+        src = repo.get_source(s, "bad")
+        assert src.triage_status == "needs_reauthor"
+        assert src.config == GOOD_CONFIG  # config retained for a future retry

@@ -4,7 +4,7 @@ import typer
 
 from directory.config import Settings
 from directory.db import init_db, make_engine
-from directory.ingest.author import author_mosque, run_authoring
+from directory.ingest.author import author_mosque, run_authoring, run_verify_retry
 from directory.ingest.blocklist import load_blocklist
 from directory.ingest.discover import discover_mosque, run_discovery
 from directory.ingest.extractors.bespoke import load_bespoke
@@ -231,6 +231,37 @@ def author(
     for o in outcomes:
         typer.echo(f"{o.mosque_id}: outcome={o.outcome} model={o.model}")
     typer.echo(f"Authored {len(outcomes)} mosque(s)")
+
+
+@app.command()
+def reauthor(
+    horizon_days: int = typer.Option(60, "--horizon-days", help="Verification horizon"),  # noqa: B008
+    concurrency: int | None = typer.Option(  # noqa: B008
+        None, "--concurrency", help="Parallel re-extract workers (default from settings)"
+    ),
+    render_js: bool = typer.Option(  # noqa: B008
+        True, "--render-js/--no-render-js",
+        help="Render JS sources (and click month paging) when verifying configs",
+    ),
+) -> None:
+    """Recover the `needs_reauthor` cohort with a FREE verify-retry: re-run the
+    daily extract on each source's retained config — no model call. Salvages
+    render-flakiness false-negatives; a source that fails again keeps its config
+    for a later model re-author. Run this before any paid re-author batch."""
+    settings = Settings()
+    engine = make_engine(settings.database_url)
+    load_bespoke(settings.bespoke_dir)  # a retained config may reference a bespoke module
+    renderer = render_playwright if render_js else None
+    nav_renderer = render_playwright_nav if render_js else None
+    outcomes = run_verify_retry(
+        engine, horizon_days=horizon_days,
+        concurrency=concurrency or settings.discover_concurrency,
+        renderer=renderer, nav_renderer=nav_renderer,
+    )
+    for o in outcomes:
+        typer.echo(f"{o.source_id}: status={o.triage_status} rows={o.rows_written}")
+    recovered = sum(1 for o in outcomes if o.triage_status != "needs_reauthor")
+    typer.echo(f"Verified {len(outcomes)} source(s); recovered {recovered}")
 
 
 if __name__ == "__main__":

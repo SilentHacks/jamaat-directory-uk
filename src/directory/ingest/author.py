@@ -17,7 +17,7 @@ from directory.ingest.fetch import fetch
 from directory.ingest.harness import AuthorHarness
 from directory.ingest.jsonscan import first_json_object
 from directory.ingest.prompt import build_author_prompt, build_browse_prompt
-from directory.ingest.runner import extract_source
+from directory.ingest.runner import ExtractOutcome, extract_source
 from directory.models import Mosque
 
 
@@ -185,6 +185,36 @@ def author_mosque(
             s, mosque_id, triage_status="needs_reauthor", last_status="error", last_error=detail
         )
     return AuthorOutcome(mosque_id, "needs_reauthor", detail=detail)
+
+
+def run_verify_retry(
+    engine,
+    *,
+    today: date | None = None,
+    horizon_days: int = 60,
+    fetcher=fetch,
+    renderer=None,
+    nav_renderer=None,
+    concurrency: int = 16,
+) -> list[ExtractOutcome]:
+    """Free recovery pass: re-run extraction on every ``needs_reauthor`` source
+    that still holds a config, with NO model call. Salvages render-flakiness
+    false-negatives — a config that is correct but failed a flaky/transient fetch
+    is promoted to authored/review/deferred_media; one that fails again simply
+    stays needs_reauthor with its config retained. Run this before spending any
+    paid model call on the re-author cohort."""
+    with session_scope(engine) as s:
+        source_ids = [src.id for src in repo.reauthor_sources(s)]
+
+    def _one(sid: str) -> ExtractOutcome:
+        return extract_source(
+            engine, sid, today=today, horizon_days=horizon_days,
+            fetcher=fetcher, renderer=renderer, nav_renderer=nav_renderer,
+        )
+
+    # source_ids are id-ordered; pool.map preserves order → deterministic results.
+    with ThreadPoolExecutor(max_workers=max(1, concurrency)) as pool:
+        return list(pool.map(_one, source_ids))
 
 
 def order_by_city_size(mosques: list[Mosque]) -> list[Mosque]:

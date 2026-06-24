@@ -54,6 +54,29 @@ def test_author_agentic_flag_passes_fallback(monkeypatch, tmp_path):
     assert captured["bespoke_root"] is not None
 
 
+def test_reauthor_invokes_verify_retry(monkeypatch, tmp_path):
+    import directory.cli as cli
+    from directory.ingest.runner import ExtractOutcome
+
+    seen = {}
+
+    def fake_verify(engine, **kwargs):
+        seen.update(kwargs)
+        return [ExtractOutcome("m1", True, 5, "auto_accept", "authored"),
+                ExtractOutcome("m2", False, 0, "auto_reject", "needs_reauthor")]
+
+    monkeypatch.setenv("DIRECTORY_DB_PATH", str(tmp_path / "t.db"))
+    monkeypatch.setattr(cli, "run_verify_retry", fake_verify)
+    monkeypatch.setattr(cli, "load_bespoke", lambda root: [])
+
+    runner.invoke(cli.app, ["init-db"])
+    result = runner.invoke(cli.app, ["reauthor"])
+
+    assert result.exit_code == 0
+    assert "recovered 1" in result.stdout
+    assert "m1: status=authored" in result.stdout
+
+
 def test_extract_loads_bespoke_modules(monkeypatch, tmp_path):
     import directory.cli as cli
 
