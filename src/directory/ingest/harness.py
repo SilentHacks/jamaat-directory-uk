@@ -1,4 +1,5 @@
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -41,6 +42,7 @@ class _SubprocessHarness:
     without spawning a real agent."""
 
     name = "cli"
+    _cwd: str | None = None
 
     def __init__(self, *, binary: str, timeout: float = 180.0, runner=subprocess.run) -> None:
         self._binary = binary
@@ -54,13 +56,11 @@ class _SubprocessHarness:
         raise NotImplementedError
 
     def run(self, prompt: str, *, model: str) -> HarnessResult:
+        kwargs = {"capture_output": True, "text": True, "timeout": self._timeout}
+        if self._cwd:
+            kwargs["cwd"] = self._cwd
         try:
-            proc = self._runner(
-                self._command(self._prepare(prompt), model),
-                capture_output=True,
-                text=True,
-                timeout=self._timeout,
-            )
+            proc = self._runner(self._command(self._prepare(prompt), model), **kwargs)
         except (OSError, subprocess.SubprocessError) as exc:
             return HarnessResult("", model, False, error=f"{type(exc).__name__}: {exc}")
         if proc.returncode != 0:
@@ -122,25 +122,37 @@ class OpenCodeAgenticHarness(_OpenCodeCLI):
 
 class ClaudeCodeHarness(_SubprocessHarness):
     """Single-shot authoring via Claude Code's print mode:
-    ``claude -p --model <model> [--effort <e>] --output-format text <prompt>``.
+    ``claude -p --model <model> [--effort <e>] --permission-mode bypassPermissions
+    --output-format text <prompt>``.
 
-    The ``model`` spec carries an optional ``@effort`` suffix (e.g. ``opus@low``);
-    a bare alias leaves the session's default effort. Output is robustly parsed
-    downstream (first balanced JSON object), so any tool preamble is tolerated."""
+    ``--permission-mode bypassPermissions`` enables the full toolset (notably
+    WebFetch) so the agent can retrieve a candidate's live page when the embedded
+    region is insufficient, instead of refusing. The subprocess runs in an isolated
+    temp cwd (never the repo) so a stray file tool can't touch the project; the task
+    only needs the prompt plus network. The ``model`` spec carries an optional
+    ``@effort`` suffix (e.g. ``opus@low``); output is robustly parsed downstream
+    (first balanced JSON object), so any tool preamble is tolerated."""
 
     name = "claude-code"
 
     def __init__(
-        self, *, binary: str = "claude", timeout: float = 180.0, runner=subprocess.run
+        self,
+        *,
+        binary: str = "claude",
+        timeout: float = 300.0,
+        runner=subprocess.run,
+        cwd: str | None = None,
     ) -> None:
         super().__init__(binary=binary, timeout=timeout, runner=runner)
+        # Isolated scratch dir: keeps the tool-enabled agent out of the repo tree.
+        self._cwd = cwd or tempfile.mkdtemp(prefix="jduk-author-")
 
     def _command(self, prompt: str, model: str) -> list[str]:
         model_id, effort = _split_effort(model)
         cmd = [self._binary, "-p", "--model", model_id]
         if effort:
             cmd += ["--effort", effort]
-        cmd += ["--output-format", "text", prompt]
+        cmd += ["--permission-mode", "bypassPermissions", "--output-format", "text", prompt]
         return cmd
 
 

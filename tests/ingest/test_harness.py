@@ -1,3 +1,4 @@
+import tempfile
 from types import SimpleNamespace
 
 from directory.ingest.harness import (
@@ -81,12 +82,12 @@ def test_agentic_harness_reports_failure_on_nonzero_exit():
     assert res.error == "navigation blew up"
 
 
-def test_claude_code_builds_print_command_with_model_and_effort():
+def test_claude_code_builds_print_command_with_model_effort_and_tools():
     seen = {}
 
-    def fake_runner(cmd, *, capture_output, text, timeout):
+    def fake_runner(cmd, **kwargs):
         seen["cmd"] = cmd
-        seen["timeout"] = timeout
+        seen["kwargs"] = kwargs
         return SimpleNamespace(returncode=0, stdout='{"shape":"rules"}', stderr="")
 
     res = ClaudeCodeHarness(runner=fake_runner, timeout=120.0).run("do it", model="opus@low")
@@ -100,7 +101,11 @@ def test_claude_code_builds_print_command_with_model_and_effort():
     assert cmd[-1] == "do it"  # prompt is the trailing positional
     assert cmd[cmd.index("--model") + 1] == "opus"
     assert cmd[cmd.index("--effort") + 1] == "low"
-    assert seen["timeout"] == 120.0
+    # full toolset enabled so the agent can WebFetch the live page
+    assert cmd[cmd.index("--permission-mode") + 1] == "bypassPermissions"
+    assert seen["kwargs"]["timeout"] == 120.0
+    # runs in an isolated temp dir, never the repo
+    assert seen["kwargs"]["cwd"].startswith(tempfile.gettempdir())
 
 
 def test_claude_code_omits_effort_when_unspecified():
