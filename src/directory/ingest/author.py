@@ -12,7 +12,7 @@ from directory import repository as repo
 from directory.db import session_scope
 from directory.ingest.discover import CandidateBundle
 from directory.ingest.extractors.bespoke import load_bespoke, save_module
-from directory.ingest.extractors.config_schema import SourceConfig
+from directory.ingest.extractors.config_schema import MediaSpec, SourceConfig
 from directory.ingest.fetch import fetch
 from directory.ingest.harness import (
     AuthorHarness,
@@ -38,7 +38,8 @@ ProgressFn = Callable[[int, int, object], None]
 @dataclass
 class AuthorOutcome:
     mosque_id: str
-    outcome: str  # authored|review|deferred_media|needs_reauthor|no_candidate|skipped|failed
+    # authored|review|deferred_media|no_timetable|needs_reauthor|no_candidate|skipped|failed
+    outcome: str
     model: str | None = None
     detail: str | None = None
 
@@ -73,26 +74,83 @@ def extract_json(text: str) -> str | None:
     return first_json_object(text)
 
 
-def _parse_output(raw: str, default_url: str) -> tuple[str, SourceConfig, str | None]:
-    """Parse a harness reply into (chosen_url, SourceConfig, module_code).
+# Model outcomes that terminate authoring with no extractable timetable; both land
+# the source on triage_status="no_timetable" (the last_status detail distinguishes
+# them). See gates/discovery for the deterministic counterparts.
+_TERMINAL_OUTCOMES = frozenset({"no_timetable", "wrong_site"})
+# wrong_site keeps its own last_status so a misrouted website is distinguishable
+# from a genuine "this mosque publishes no timetable".
+_TERMINAL_LAST_STATUS = {"no_timetable": "no_timetable", "wrong_site": "wrong_site"}
 
-    Accepts {"url":..., "config": {...}, "module_code": "..."} or a bare config.
-    `module_code` is the bespoke module source, present only on the envelope form.
+
+@dataclass
+class AuthorDecision:
+    """A parsed harness reply. ``outcome`` routes what happens next:
+    - ``config``: ``config`` (+ optional ``module_code``) is verified and persisted.
+    - ``media``: ``config`` is an image/pdf media config to defer.
+    - ``no_timetable`` / ``wrong_site``: terminal — record and stop, no escalation.
+    - ``unknown``: the model could not decide; escalate to the next stage.
+    """
+
+    outcome: str
+    config: SourceConfig | None = None
+    url: str | None = None
+    module_code: str | None = None
+    reason: str | None = None
+
+
+def parse_decision(raw: str, default_url: str) -> AuthorDecision:
+    """Parse a harness reply into an AuthorDecision.
+
+    Accepts the historical config envelopes — ``{"url":..., "config": {...},
+    "module_code": "..."}`` or a bare config object — and the narrow decision
+    envelopes ``{"outcome": "media"|"no_timetable"|"wrong_site"|"unknown", ...}``.
     Raises ValueError (incl. pydantic ValidationError) on anything invalid.
     """
     obj = extract_json(raw)
     if obj is None:
         raise ValueError("no JSON object in harness output")
     data = json.loads(obj)
+    if not isinstance(data, dict):
+        raise ValueError("harness output is not a JSON object")
+
+    outcome = data.get("outcome")
+
+    if outcome in _TERMINAL_OUTCOMES:
+        return AuthorDecision(
+            outcome=outcome, reason=data.get("reason"), url=data.get("url") or default_url
+        )
+    if outcome == "unknown":
+        return AuthorDecision(
+            outcome="unknown", reason=data.get("reason"), url=data.get("url") or default_url
+        )
+    if outcome == "media":
+        kind = data.get("kind")
+        media_url = data.get("url")
+        if kind not in {"image", "pdf"} or not media_url:
+            raise ValueError("media decision requires kind 'image'|'pdf' and a url")
+        return AuthorDecision(
+            outcome="media",
+            config=SourceConfig(shape=kind, media=MediaSpec(url=media_url)),
+            url=data.get("page_url") or default_url,
+            reason=data.get("reason"),
+        )
+
+    # Config envelope or bare config (back-compat).
     module_code: str | None = None
-    if isinstance(data, dict) and "config" in data:
+    if "config" in data:
         cfg_obj = data["config"]
         url = data.get("url") or default_url
         module_code = data.get("module_code")
     else:
         cfg_obj = data
         url = default_url
-    return url, SourceConfig.model_validate(cfg_obj), module_code
+    return AuthorDecision(
+        outcome="config",
+        config=SourceConfig.model_validate(cfg_obj),
+        url=url,
+        module_code=module_code,
+    )
 
 
 def _attempt(
@@ -106,13 +164,36 @@ def _attempt(
     allow_bespoke: bool,
 ) -> tuple[AuthorOutcome | None, str | None]:
     """Verify one harness reply. Returns (outcome, None) when it terminally
-    authored/reviewed, else (None, detail) to escalate to the next stage."""
+    authored/reviewed/classified, else (None, detail) to escalate to the next
+    stage."""
     if not res.ok:
         return None, res.error
     try:
-        chosen_url, config, module_code = _parse_output(res.text, default_url)
+        decision = parse_decision(res.text, default_url)
     except ValueError as exc:
         return None, f"invalid config: {exc}"
+
+    # Terminal classification: the model judged the site has no extractable
+    # timetable. Record it and stop — there is nothing a stronger model can author,
+    # so do not escalate.
+    if decision.outcome in _TERMINAL_OUTCOMES:
+        now = datetime.now(tz=UTC).isoformat(timespec="seconds")
+        with session_scope(ctx.engine, write=True) as s:
+            repo.set_source_state(
+                s, mosque_id, triage_status="no_timetable",
+                last_status=_TERMINAL_LAST_STATUS[decision.outcome],
+                last_error=decision.reason or decision.outcome,
+                authored_by=f"{harness_name}:{model}", authored_at=now,
+            )
+        return AuthorOutcome(mosque_id, "no_timetable", model, detail=decision.reason), None
+
+    # The model could not decide → let the next stage try.
+    if decision.outcome == "unknown":
+        return None, decision.reason or "model returned outcome 'unknown'"
+
+    config = decision.config
+    chosen_url = decision.url or default_url
+    module_code = decision.module_code
 
     if config.shape == "bespoke":
         if not allow_bespoke or ctx.bespoke_root is None:

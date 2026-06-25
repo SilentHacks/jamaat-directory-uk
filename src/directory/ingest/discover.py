@@ -1,8 +1,7 @@
 import json
-import re
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
@@ -13,14 +12,35 @@ from bs4 import BeautifulSoup
 from directory import repository as repo
 from directory.db import session_scope
 from directory.ingest.blocklist import is_blocklisted
+from directory.ingest.evidence import (
+    PageEvidence,
+    _distinct_prayers,
+    _page_needs_render,
+    _TIME_SCAN_RE,
+    build_page_evidence,
+    terminal_no_timetable,
+)
 from directory.ingest.extractors.engine import extract
 from directory.ingest.extractors.platforms import base as platforms
 from directory.ingest.fetch import USER_AGENT, fetch
 from directory.ingest.gates import run_gates
 from directory.ingest.materialize import materialize
-from directory.ingest.normalize import resolve_prayer
 from directory.ingest.pager import collect_documents, extract_documents
 from directory.ingest.runner import extract_source
+
+# Re-exported for callers/tests that import these from discover (their historical
+# home); the implementation now lives in evidence.py so it is shared without a
+# circular import.
+__all__ = [
+    "_distinct_prayers",
+    "_page_needs_render",
+    "build_page_evidence",
+    "check_liveness",
+    "discover_mosque",
+    "gather_candidates",
+    "run_discovery",
+    "strip_to_region",
+]
 
 
 @dataclass
@@ -83,6 +103,11 @@ class CandidateBundle:
     mosque_id: str
     base_url: str
     candidates: list["Candidate"]
+    # Structured per-page evidence (tables, media, widgets, JS/terminal hints) so
+    # downstream prompts/enumerators reason over a compact summary instead of raw
+    # HTML. Optional and defaulted so a bundle written before this field still
+    # loads (backward compatibility).
+    evidence: list[PageEvidence] = field(default_factory=list)
 
     def save(self, root: Path) -> Path:
         root.mkdir(parents=True, exist_ok=True)
@@ -100,6 +125,7 @@ class CandidateBundle:
             mosque_id=data["mosque_id"],
             base_url=data["base_url"],
             candidates=[Candidate(**c) for c in data["candidates"]],
+            evidence=[PageEvidence.from_dict(e) for e in data.get("evidence", [])],
         )
 
 
@@ -305,16 +331,25 @@ def _best_verified(
 
 
 def _bundle_from_pages(
-    mosque_id: str, base_url: str, fetched_pages: dict[str, str], *, max_candidates: int = 5
+    mosque_id: str,
+    base_url: str,
+    fetched_pages: dict[str, str],
+    *,
+    max_candidates: int = 5,
+    evidence: list[PageEvidence] | None = None,
 ) -> CandidateBundle:
     """Build a CandidateBundle from pages already fetched during discovery, so the
-    AI hand-off costs no additional requests."""
+    AI hand-off costs no additional requests. The structured per-page evidence
+    (already built for the terminal-classification check) rides along so prompts
+    and the enumerator do not have to re-parse the raw HTML."""
     candidates: list[Candidate] = []
     for url, html in fetched_pages.items():
         region, text = strip_to_region(html)
         candidates.append(Candidate(url=url, score=_score(text), region_html=region, text=text))
     candidates.sort(key=lambda c: c.score, reverse=True)
-    return CandidateBundle(mosque_id, base_url, candidates[:max_candidates])
+    return CandidateBundle(
+        mosque_id, base_url, candidates[:max_candidates], evidence=evidence or []
+    )
 
 
 def _usable(res) -> bool:
@@ -322,69 +357,6 @@ def _usable(res) -> bool:
     non-error HTTP status. 4xx/5xx pages (even with a body) are dropped so a
     soft-404 carrying sitewide chrome can never be authored from."""
     return not res.error and bool(res.html) and res.status < 400
-
-
-# Signals that a page is a JS-hydrated shell hiding its prayer data.
-_RENDER_MIN_TIMES = 5
-_TIME_SCAN_RE = re.compile(r"\b\d{1,2}[:.]\d{2}\b")
-_URL_PRAYER_HINTS = ("prayer", "salah", "namaz", "timetable", "time-table", "times")
-_JS_MARKERS = (
-    "squarespace", "wixstatic", "wix.com", "data-reactroot", 'id="root"',
-    "masjidbox", "my-masjid.com", "mawaqit.net",
-)
-
-
-def _visible_text(soup: BeautifulSoup) -> str:
-    for tag in soup(["script", "style", "noscript", "template"]):
-        tag.decompose()
-    return soup.get_text(" ", strip=True)
-
-
-def _distinct_prayers(text: str) -> int:
-    """How many of the five daily prayers are named in ``text``."""
-    found: set = set()
-    for token in re.findall(r"[A-Za-zÀ-ɏ']+", text):
-        match = resolve_prayer(token)
-        if match.prayer is not None and not match.fuzzy:
-            found.add(match.prayer)
-    return len(found)
-
-
-def _has_empty_prayer_table(soup: BeautifulSoup) -> bool:
-    """A table whose header resolves to >=2 prayers but whose body has no data
-    rows — the classic hydration skeleton (e.g. Squarespace + Google Sheets)."""
-    for table in soup.find_all("table"):
-        rows = table.find_all("tr")
-        prayer_cols = 0
-        for cell in (rows[0].find_all(["th", "td"]) if rows else []):
-            match = resolve_prayer(cell.get_text(" ", strip=True))
-            if match.prayer is not None and not match.fuzzy:
-                prayer_cols += 1
-        data_rows = [r for r in rows if r.find_all("td")]
-        if prayer_cols >= 2 and len(data_rows) <= 1:
-            return True
-    return False
-
-
-def _page_needs_render(url: str, html: str) -> bool:
-    """True when a page looks prayer-relevant yet lacks enough static data to
-    extract — i.e. its timetable is injected by JavaScript. Tuned for recall:
-    a false positive only costs one wasted render, while a false negative would
-    silently skip a JS site (which the funnel must never do)."""
-    soup = BeautifulSoup(html, "lxml")
-    text = _visible_text(soup)
-    if len(_TIME_SCAN_RE.findall(text)) >= _RENDER_MIN_TIMES:
-        return False  # already carries a full timetable statically
-    if _has_empty_prayer_table(soup):
-        return True
-    if _distinct_prayers(text) >= 2:
-        return True
-    low = html.lower()
-    if any(marker in low for marker in _JS_MARKERS):
-        url_pray = any(hint in url.lower() for hint in _URL_PRAYER_HINTS)
-        if url_pray or _distinct_prayers(text) >= 1:
-            return True
-    return False
 
 
 def discover_mosque(
@@ -501,8 +473,33 @@ def discover_mosque(
         )
         return DiscoverOutcome(mosque_id, result.triage_status, match.platform)
 
-    # Nothing verified deterministically → hand off to the AI funnel.
-    bundle = _bundle_from_pages(mosque_id, home_url, fetched_pages)
+    # Deterministic miss → build structured evidence once (reused for the terminal
+    # check and the AI hand-off bundle).
+    evidences = [
+        build_page_evidence(html, url, today=today)
+        for url, html in fetched_pages.items()
+    ]
+
+    # Conservative terminal classification: if every usable page is conclusively
+    # not a timetable (under construction / parked / wrong site / empty) and no
+    # page carries any media/widget/iframe/prayer-table/JS evidence, record
+    # no_timetable instead of spending an AI call on a source with nothing to author.
+    terminal = terminal_no_timetable(evidences)
+    if terminal is not None:
+        last_status, last_error = terminal
+        with session_scope(engine, write=True) as s:
+            repo.create_or_update_source(
+                s, source_id=mosque_id, mosque_id=mosque_id, url=home_url,
+                platform=None, shape=None, config=None, requires_js=False,
+                triage_status="no_timetable",
+            )
+            repo.set_source_state(
+                s, mosque_id, last_status=last_status, last_error=last_error
+            )
+        return DiscoverOutcome(mosque_id, "no_timetable", None, detail=last_status)
+
+    # Otherwise hand off to the AI funnel.
+    bundle = _bundle_from_pages(mosque_id, home_url, fetched_pages, evidence=evidences)
     bundle.save(candidate_root)
     best_url = bundle.candidates[0].url if bundle.candidates else None
     with session_scope(engine, write=True) as s:
