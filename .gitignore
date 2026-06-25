@@ -30,3 +30,16 @@ docs/superpowers/
 .pytest_cache/
 .ruff_cache/
 .env
+
+# Prod-only ops material (handbook, deploy dir, origin cert)
+.local/
+
+# Local deploy / container build artifacts (kept out of the public repo)
+Dockerfile
+.dockerignore
+docker-compose*.yml
+.env.production*
+
+# Local SQLite backups and internal scratch scripts
+data/*.db.bak*
+scripts/_*.py
