@@ -40,3 +40,16 @@ def test_snapshot_has_etag_and_counts(client):
     assert etag is not None
     assert etag.startswith('"') and etag.endswith('"')
     assert r.json()["count"] == 2
+
+
+def test_snapshot_conditional_request(client):
+    etag = client.get("/v1/snapshot").headers["ETag"]
+
+    matched = client.get("/v1/snapshot", headers={"If-None-Match": etag})
+    assert matched.status_code == 304
+    assert matched.headers["ETag"] == etag
+    assert matched.content == b""
+
+    stale = client.get("/v1/snapshot", headers={"If-None-Match": '"deadbeefdeadbeef"'})
+    assert stale.status_code == 200
+    assert stale.json()["count"] == 2

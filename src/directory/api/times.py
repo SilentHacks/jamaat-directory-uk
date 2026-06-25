@@ -3,7 +3,7 @@ import json
 from datetime import date as date_cls
 from datetime import timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import Engine
 
 from directory import repository as repo
@@ -75,8 +75,20 @@ def times(
         ]
 
 
+def _if_none_match(header: str | None, etag: str) -> bool:
+    """Return True if the quoted ETag matches an If-None-Match header value."""
+    if not header:
+        return False
+    candidates = [c.strip() for c in header.split(",")]
+    return "*" in candidates or etag in candidates
+
+
 @router.get("/snapshot")
-def snapshot(response: Response, engine: Engine = Depends(get_engine)):  # noqa: B008
+def snapshot(
+    request: Request,
+    response: Response,
+    engine: Engine = Depends(get_engine),  # noqa: B008
+):
     settings = get_settings()
     today = date_cls.today()
     horizon = (today + timedelta(days=settings.snapshot_horizon_days)).isoformat()
@@ -96,6 +108,8 @@ def snapshot(response: Response, engine: Engine = Depends(get_engine)):  # noqa:
         "count": len(payload_mosques),
         "mosques": payload_mosques,
     }
-    etag = hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()[:16]
-    response.headers["ETag"] = f'"{etag}"'
+    etag = f'"{hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()[:16]}"'
+    response.headers["ETag"] = etag
+    if _if_none_match(request.headers.get("if-none-match"), etag):
+        return Response(status_code=304, headers={"ETag": etag})
     return body
