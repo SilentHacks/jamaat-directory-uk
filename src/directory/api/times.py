@@ -94,9 +94,10 @@ def snapshot(
     horizon = (today + timedelta(days=settings.snapshot_horizon_days)).isoformat()
     with session_scope(engine) as s:
         mosques = repo.iter_all_mosques(s)
+        times_by_mosque = repo.get_times_grouped(s, today.isoformat(), horizon)
         payload_mosques = []
         for m in mosques:
-            occ = repo.get_times(s, m.id, today.isoformat(), horizon)
+            occ = times_by_mosque.get(m.id, [])
             payload_mosques.append(
                 {
                     "mosque": MosqueOut.from_model(m, bool(occ)).model_dump(),

@@ -53,6 +53,18 @@ def mosque_has_times(session: Session, mosque_id: str) -> bool:
     )
 
 
+def mosques_with_times(
+    session: Session, mosque_ids: list[str] | None = None
+) -> set[str]:
+    """Set of mosque ids that have at least one occurrence — one query in place
+    of a per-mosque mosque_has_times loop. Pass ``mosque_ids`` to scope the scan
+    to a page; omit it (covering every mosque) and the result is unfiltered."""
+    stmt = select(Occurrence.mosque_id).distinct()
+    if mosque_ids is not None:
+        stmt = stmt.where(Occurrence.mosque_id.in_(mosque_ids))
+    return set(session.scalars(stmt))
+
+
 def _within_radius(mlat: float, mlng: float, lat: float, lng: float, radius_km: float) -> bool:
     dlat = (mlat - lat) * _KM_PER_DEG_LAT
     dlng = (mlng - lng) * _KM_PER_DEG_LAT * math.cos(math.radians(lat))
@@ -91,7 +103,8 @@ def list_mosques(
         rows = [m for m in rows if _within_radius(m.lat, m.lng, lat, lng, radius_km)]
 
     if has_times is not None:
-        rows = [m for m in rows if mosque_has_times(session, m.id) == has_times]
+        with_times = mosques_with_times(session)
+        rows = [m for m in rows if (m.id in with_times) == has_times]
 
     return rows[offset : offset + limit]
 
@@ -111,6 +124,29 @@ def get_times(session: Session, mosque_id: str, date_from: str, date_to: str) ->
         .order_by(Occurrence.date, Occurrence.prayer, Occurrence.session_idx)
     )
     return list(session.scalars(stmt))
+
+
+def get_times_grouped(
+    session: Session, date_from: str, date_to: str
+) -> dict[str, list[Occurrence]]:
+    """All occurrences in [date_from, date_to] grouped by mosque_id in a single
+    query — the bulk form of get_times, so callers spanning every mosque (e.g.
+    the snapshot) avoid a per-mosque N+1. Each mosque's list keeps get_times'
+    (date, prayer, session_idx) ordering."""
+    stmt = (
+        select(Occurrence)
+        .where(Occurrence.date >= date_from, Occurrence.date <= date_to)
+        .order_by(
+            Occurrence.mosque_id,
+            Occurrence.date,
+            Occurrence.prayer,
+            Occurrence.session_idx,
+        )
+    )
+    grouped: dict[str, list[Occurrence]] = {}
+    for occ in session.scalars(stmt):
+        grouped.setdefault(occ.mosque_id, []).append(occ)
+    return grouped
 
 
 def query_times(
@@ -345,6 +381,25 @@ def source_for_mosque(session: Session, mosque_id: str) -> Source | None:
     return session.scalars(
         select(Source).where(Source.mosque_id == mosque_id).order_by(Source.id)
     ).first()
+
+
+def sources_for_mosques(
+    session: Session, mosque_ids: list[str]
+) -> dict[str, Source]:
+    """First source (lowest id) per mosque for a page of ids, in one query — the
+    bulk form of source_for_mosque. Mirrors its order_by(Source.id) tie-break so
+    a mosque with several sources resolves to the same row either way."""
+    if not mosque_ids:
+        return {}
+    stmt = (
+        select(Source)
+        .where(Source.mosque_id.in_(mosque_ids))
+        .order_by(Source.mosque_id, Source.id)
+    )
+    by_mosque: dict[str, Source] = {}
+    for src in session.scalars(stmt):
+        by_mosque.setdefault(src.mosque_id, src)
+    return by_mosque
 
 
 def sources_with_flag(session: Session, flag: str) -> list[Source]:

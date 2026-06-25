@@ -53,10 +53,11 @@ def list_mosques(
             s, city=city, bbox=bbox_t, near=near_t, radius_km=radius_km,
             has_times=has_times, limit=limit, offset=offset,
         )
+        ids = [m.id for m in rows]
+        with_times = repo.mosques_with_times(s, ids)
+        sources = repo.sources_for_mosques(s, ids)
         return [
-            MosqueOut.from_model(
-                m, repo.mosque_has_times(s, m.id), repo.source_for_mosque(s, m.id)
-            )
+            MosqueOut.from_model(m, m.id in with_times, sources.get(m.id))
             for m in rows
         ]
 
