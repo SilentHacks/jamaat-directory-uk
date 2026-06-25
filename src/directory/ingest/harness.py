@@ -1,7 +1,13 @@
+import os
+import signal
 import subprocess
 import tempfile
+import threading
+import time
 from dataclasses import dataclass
 from typing import Protocol
+
+_POSIX = os.name == "posix"
 
 
 @dataclass
@@ -10,6 +16,114 @@ class HarnessResult:
     model: str
     ok: bool
     error: str | None = None
+
+
+class _Aborted(RuntimeError):
+    """Raised by the process runner once shutdown has been latched, so a pending
+    harness call returns a failed result instead of spawning a fresh agent."""
+
+
+class _ProcessManager:
+    """Tracks live agent subprocesses so a single Ctrl-C can tear down the whole
+    tree. Each agent is spawned in its own session/process-group; ``shutdown``
+    signals every group (SIGTERM, then SIGKILL for stragglers) so no orphaned
+    ``claude`` — or the tools it spawned — keeps running and burning tokens after
+    the operator interrupts a long authoring batch."""
+
+    def __init__(self) -> None:
+        self._live: set[subprocess.Popen] = set()
+        self._lock = threading.Lock()
+        self._shutdown = threading.Event()
+
+    @property
+    def shutting_down(self) -> bool:
+        return self._shutdown.is_set()
+
+    def reset(self) -> None:
+        """Clear the shutdown latch for a fresh run (and between tests)."""
+        self._shutdown.clear()
+
+    def _register(self, proc: subprocess.Popen) -> None:
+        with self._lock:
+            self._live.add(proc)
+
+    def _unregister(self, proc: subprocess.Popen) -> None:
+        with self._lock:
+            self._live.discard(proc)
+
+    @staticmethod
+    def _signal(proc: subprocess.Popen, sig: int) -> None:
+        try:
+            if _POSIX:
+                os.killpg(os.getpgid(proc.pid), sig)
+            else:  # pragma: no cover - non-POSIX fallback
+                proc.send_signal(sig)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass  # already dead, or we lost the right to signal it
+
+    def shutdown(self, *, grace: float = 0.5) -> int:
+        """Latch shutdown and terminate every live agent process group. Returns
+        the number of process groups that were signalled."""
+        self._shutdown.set()
+        with self._lock:
+            live = list(self._live)
+        for proc in live:
+            self._signal(proc, signal.SIGTERM)
+        if live:
+            deadline = time.monotonic() + grace
+            while time.monotonic() < deadline and any(p.poll() is None for p in live):
+                time.sleep(0.05)
+            for proc in live:
+                if proc.poll() is None:
+                    self._signal(proc, signal.SIGKILL)
+        return len(live)
+
+    def run(self, cmd, *, capture_output=True, text=True, timeout=None, cwd=None):
+        """``subprocess.run``-compatible runner that registers the child for group
+        termination. Refuses to spawn once shutdown has been latched, and never
+        leaks the child if the call is interrupted or times out."""
+        if self._shutdown.is_set():
+            raise _Aborted("authoring shutdown in progress")
+        pipe = subprocess.PIPE if capture_output else None
+        kwargs = {}
+        if _POSIX:
+            # Own session/group so killpg reaches the agent *and* its child tools.
+            kwargs["start_new_session"] = True
+        proc = subprocess.Popen(cmd, stdout=pipe, stderr=pipe, text=text, cwd=cwd, **kwargs)
+        self._register(proc)
+        try:
+            out, err = proc.communicate(timeout=timeout)
+        except BaseException:
+            # Timeout, Ctrl-C on this thread, or any abort: kill the whole group
+            # and reap it before re-raising so nothing is left running.
+            self._signal(proc, signal.SIGKILL)
+            try:
+                proc.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+            raise
+        finally:
+            self._unregister(proc)
+        return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
+
+
+_processes = _ProcessManager()
+
+
+def request_shutdown() -> int:
+    """Latch shutdown and terminate all in-flight agent subprocesses. Returns the
+    number of process groups signalled. Idempotent."""
+    return _processes.shutdown()
+
+
+def is_shutting_down() -> bool:
+    """True once :func:`request_shutdown` has latched (workers should stop)."""
+    return _processes.shutting_down
+
+
+def reset_shutdown() -> None:
+    """Clear the shutdown latch so a new run can spawn agents again."""
+    _processes.reset()
 
 
 class AuthorHarness(Protocol):
@@ -44,7 +158,7 @@ class _SubprocessHarness:
     name = "cli"
     _cwd: str | None = None
 
-    def __init__(self, *, binary: str, timeout: float = 180.0, runner=subprocess.run) -> None:
+    def __init__(self, *, binary: str, timeout: float = 180.0, runner=_processes.run) -> None:
         self._binary = binary
         self._timeout = timeout
         self._runner = runner
@@ -61,6 +175,8 @@ class _SubprocessHarness:
             kwargs["cwd"] = self._cwd
         try:
             proc = self._runner(self._command(self._prepare(prompt), model), **kwargs)
+        except _Aborted:
+            return HarnessResult("", model, False, error="aborted")
         except (OSError, subprocess.SubprocessError) as exc:
             return HarnessResult("", model, False, error=f"{type(exc).__name__}: {exc}")
         if proc.returncode != 0:
@@ -76,7 +192,7 @@ class _OpenCodeCLI(_SubprocessHarness):
     name = "opencode"
 
     def __init__(
-        self, *, binary: str = "opencode", timeout: float = 180.0, runner=subprocess.run
+        self, *, binary: str = "opencode", timeout: float = 180.0, runner=_processes.run
     ) -> None:
         super().__init__(binary=binary, timeout=timeout, runner=runner)
 
@@ -107,7 +223,7 @@ class OpenCodeAgenticHarness(_OpenCodeCLI):
         page_budget: int = 8,
         token_budget: int = 200_000,
         timeout: float = 600.0,
-        runner=subprocess.run,
+        runner=_processes.run,
     ) -> None:
         super().__init__(binary=binary, timeout=timeout, runner=runner)
         self._page_budget = page_budget
@@ -140,7 +256,7 @@ class ClaudeCodeHarness(_SubprocessHarness):
         *,
         binary: str = "claude",
         timeout: float = 300.0,
-        runner=subprocess.run,
+        runner=_processes.run,
         cwd: str | None = None,
     ) -> None:
         super().__init__(binary=binary, timeout=timeout, runner=runner)
@@ -176,7 +292,7 @@ class ClaudeCodeAgenticHarness(_SubprocessHarness):
         page_budget: int = 8,
         token_budget: int = 200_000,
         timeout: float = 600.0,
-        runner=subprocess.run,
+        runner=_processes.run,
     ) -> None:
         super().__init__(binary=binary, timeout=timeout, runner=runner)
         self._page_budget = page_budget

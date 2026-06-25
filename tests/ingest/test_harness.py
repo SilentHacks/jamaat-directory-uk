@@ -1,11 +1,21 @@
+import subprocess
 import tempfile
+import threading
+import time
 from types import SimpleNamespace
+
+import pytest
 
 from directory.ingest.harness import (
     ClaudeCodeAgenticHarness,
     ClaudeCodeHarness,
     OpenCodeAgenticHarness,
     OpenCodeHarness,
+    _Aborted,
+    _processes,
+    is_shutting_down,
+    request_shutdown,
+    reset_shutdown,
 )
 
 
@@ -158,3 +168,68 @@ def test_claude_code_agentic_allows_web_tools_and_embeds_budget():
     prompt_arg = cmd[-1]
     assert "5 pages" in prompt_arg and "1000 tokens" in prompt_arg
     assert seen["timeout"] == 300.0
+
+
+# --- process-group runner / Ctrl-C robustness -------------------------------
+
+@pytest.fixture(autouse=True)
+def _clear_shutdown():
+    """Keep the module-singleton process manager clean between tests, even if a
+    test latches shutdown."""
+    reset_shutdown()
+    yield
+    reset_shutdown()
+
+
+def test_managed_runner_returns_completed_process():
+    proc = _processes.run(["printf", "hello"], capture_output=True, text=True, timeout=10)
+    assert isinstance(proc, subprocess.CompletedProcess)
+    assert proc.returncode == 0
+    assert proc.stdout == "hello"
+    # the child is unregistered once it completes
+    assert not _processes._live
+
+
+def test_managed_runner_refuses_to_spawn_once_shutdown_latched():
+    request_shutdown()
+    assert is_shutting_down() is True
+    with pytest.raises(_Aborted):
+        _processes.run(["printf", "nope"], timeout=10)
+
+
+def test_harness_returns_aborted_result_when_shutting_down():
+    # default (managed) runner; latched shutdown means no real `claude` is spawned
+    request_shutdown()
+    res = ClaudeCodeHarness().run("p", model="opus@low")
+    assert res.ok is False
+    assert res.error == "aborted"
+
+
+def test_shutdown_terminates_live_process_and_clears_registry():
+    started = threading.Event()
+    result = {}
+
+    def _run_long():
+        started.set()
+        try:
+            result["proc"] = _processes.run(["sleep", "30"], timeout=30)
+        except BaseException as exc:  # pragma: no cover - defensive
+            result["exc"] = exc
+
+    t = threading.Thread(target=_run_long)
+    t.start()
+    started.wait(timeout=5)
+    # wait until the child is registered as live
+    deadline = time.monotonic() + 5
+    while not _processes._live and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert _processes._live, "long-running child was never registered"
+
+    signalled = request_shutdown()
+    assert signalled >= 1
+
+    t.join(timeout=5)
+    assert not t.is_alive(), "worker did not return after shutdown killed the child"
+    assert not _processes._live  # registry drained
+    # the killed process returns a non-zero / signal exit code, not a clean 0
+    assert result.get("proc") is None or result["proc"].returncode != 0

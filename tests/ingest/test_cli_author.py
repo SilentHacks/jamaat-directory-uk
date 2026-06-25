@@ -28,6 +28,28 @@ def test_author_all_invokes_run_authoring(monkeypatch):
     assert seen["models"][0]  # cheap model wired from settings
 
 
+def test_author_ctrl_c_exits_cleanly_with_summary(monkeypatch, tmp_path):
+    import directory.cli as cli
+
+    def fake_run(engine, **kwargs):
+        # simulate one completed mosque, then an operator Ctrl-C mid-batch
+        kwargs["on_outcome"](1, 5, AuthorOutcome("m1", "authored", "opus@low"))
+        raise KeyboardInterrupt
+
+    shutdown_calls = []
+    monkeypatch.setenv("DIRECTORY_DB_PATH", str(tmp_path / "t.db"))
+    monkeypatch.setattr(cli, "run_authoring", fake_run)
+    monkeypatch.setattr(cli, "request_shutdown", lambda: shutdown_calls.append(True) or 0)
+
+    runner.invoke(cli.app, ["init-db"])
+    result = runner.invoke(cli.app, ["author"])
+
+    assert result.exit_code == 130  # standard interrupted-by-Ctrl-C code
+    assert "Interrupted after 1 mosque(s)" in result.output
+    assert "authored=1" in result.output
+    assert shutdown_calls  # agents were told to terminate
+
+
 def test_author_one_invokes_author_mosque(monkeypatch):
     monkeypatch.setattr(
         cli, "author_mosque",

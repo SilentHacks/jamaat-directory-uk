@@ -2,13 +2,26 @@
 import json
 from datetime import date
 
+import pytest
+
 from directory import repository as repo
 from directory.db import session_scope
 from directory.ingest.author import order_by_city_size, run_authoring
 from directory.ingest.discover import Candidate, CandidateBundle
 from directory.ingest.fetch import FetchResult
+from directory.ingest.harness import HarnessResult, reset_shutdown
 from directory.models import Mosque, Source
 from tests.conftest import FakeBrowsingHarness, FakeHarness
+
+
+class _InterruptingHarness:
+    """AuthorHarness double that raises KeyboardInterrupt, simulating an operator
+    Ctrl-C landing while the agent call is in flight."""
+
+    name = "fake"
+
+    def run(self, prompt: str, *, model: str) -> HarnessResult:
+        raise KeyboardInterrupt
 
 TABLE_HTML = (
     "<table class='t'><tr><th>Date</th><th>Fajr</th><th>Dhuhr</th><th>Asr</th>"
@@ -71,6 +84,69 @@ def test_run_authoring_processes_all_candidates(engine, tmp_path):
 
     assert len(outs) == 2
     assert all(o.outcome == "authored" for o in outs)
+
+
+def test_run_authoring_reports_live_progress(engine, tmp_path):
+    _candidate(engine, "m1", "London", tmp_path)
+    _candidate(engine, "m2", "London", tmp_path)
+    harness = FakeHarness(_good_output("https://m1.example/prayer-times"))
+
+    calls = []
+    run_authoring(
+        engine, harness=harness, candidate_root=tmp_path, models=("cheap",),
+        today=date(2026, 6, 1), horizon_days=5, fetcher=_fetcher,
+        on_outcome=lambda done, total, out: calls.append((done, total, out.mosque_id)),
+    )
+
+    assert [done for done, _, _ in calls] == [1, 2]  # live, sequential progress
+    assert {total for _, total, _ in calls} == {2}  # total known up front
+    assert {mid for _, _, mid in calls} == {"m1", "m2"}
+
+
+def test_interrupt_leaves_sources_candidate_and_resumes(engine, tmp_path):
+    _candidate(engine, "m1", "London", tmp_path)
+    _candidate(engine, "m2", "London", tmp_path)
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            run_authoring(
+                engine, harness=_InterruptingHarness(), candidate_root=tmp_path,
+                models=("cheap",), concurrency=1, today=date(2026, 6, 1), horizon_days=5,
+                fetcher=_fetcher,
+            )
+        # interrupted in-flight + never-dispatched both remain candidate → resumable
+        with session_scope(engine) as s:
+            assert {c.id for c in repo.candidate_sources(s)} == {"m1", "m2"}
+    finally:
+        reset_shutdown()  # the run latched a shutdown; clear it for the resume
+
+    good = FakeHarness(_good_output("https://m1.example/prayer-times"))
+    outs = run_authoring(engine, harness=good, candidate_root=tmp_path, models=("cheap",),
+                         today=date(2026, 6, 1), horizon_days=5, fetcher=_fetcher)
+    assert sorted(o.outcome for o in outs) == ["authored", "authored"]
+    with session_scope(engine) as s:
+        assert repo.candidate_sources(s) == []
+
+
+def test_interrupt_during_verify_rolls_back_to_candidate(engine, tmp_path):
+    _candidate(engine, "m1", "London", tmp_path)
+
+    def _boom_fetch(url, **kwargs):
+        # Ctrl-C during the verify fetch, *after* a provisional 'authored' write
+        raise KeyboardInterrupt
+
+    good = FakeHarness(_good_output("https://m1.example/prayer-times"))
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            run_authoring(engine, harness=good, candidate_root=tmp_path, models=("cheap",),
+                          concurrency=1, today=date(2026, 6, 1), horizon_days=5,
+                          fetcher=_boom_fetch)
+        # rolled back: not left stranded as a half-verified 'authored'
+        with session_scope(engine) as s:
+            src = repo.get_source(s, "m1")
+            assert src.triage_status == "candidate"
+            assert src.config is None
+    finally:
+        reset_shutdown()
 
 
 def test_budget_caps_spend_and_is_resumable(engine, tmp_path):

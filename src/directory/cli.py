@@ -1,3 +1,5 @@
+import time
+from collections import Counter
 from pathlib import Path
 
 import typer
@@ -19,6 +21,7 @@ from directory.ingest.harness import (
     ClaudeCodeHarness,
     OpenCodeAgenticHarness,
     OpenCodeHarness,
+    request_shutdown,
 )
 from directory.ingest.runner import extract_source, run_extract
 from directory.ingest.seed import (
@@ -72,6 +75,39 @@ def _build_harness(settings, *, harness_name: str, fallback: bool, agentic: bool
         )
         return harness, models, fb, settings.author_model_strong
     raise typer.BadParameter(f"unknown harness '{harness_name}' (claude-code|opencode)")
+
+
+def _make_reporter(label: str):
+    """Build a live progress callback for the long-running funnel commands.
+
+    Returns ``(tally, report, elapsed)``: a Counter of statuses seen so far, an
+    ``on_outcome(done, total, result)`` callback that prints one line per
+    completed source (skipping budget no-ops), and a callable for total elapsed
+    seconds. Works for both AuthorOutcome and ExtractOutcome results."""
+    start = time.monotonic()
+    tally: Counter[str] = Counter()
+
+    def report(done: int, total: int, result) -> None:
+        if result is None:  # budget exhausted / not dispatched — nothing to show
+            return
+        status = getattr(result, "outcome", None) or getattr(result, "triage_status", "?")
+        ident = getattr(result, "mosque_id", None) or getattr(result, "source_id", "?")
+        model = getattr(result, "model", None)
+        rows = getattr(result, "rows_written", None)
+        tally[status] += 1
+        extra = f" model={model}" if model else ""
+        if rows is not None:
+            extra += f" rows={rows}"
+        typer.echo(
+            f"[{done}/{total}] {ident}: {label}={status}{extra}"
+            f"  ({time.monotonic() - start:.0f}s)"
+        )
+
+    return tally, report, lambda: time.monotonic() - start
+
+
+def _summarise(tally: Counter[str]) -> str:
+    return "  ".join(f"{k}={v}" for k, v in sorted(tally.items()))
 
 
 @app.command("init-db")
@@ -258,30 +294,52 @@ def author(
         fallback=fallback, agentic=agentic,
     )
     root = settings.candidate_dir
-    if mosque_id is not None:
-        outcomes = [
-            author_mosque(
-                engine, mosque_id, harness=harness, candidate_root=root, models=models,
+    workers = concurrency or settings.author_concurrency
+    tally, report, elapsed = _make_reporter("outcome")
+    try:
+        if mosque_id is not None:
+            outcomes = [
+                author_mosque(
+                    engine, mosque_id, harness=harness, candidate_root=root, models=models,
+                    fallback=fb, fallback_model=fb_model,
+                    bespoke_root=settings.bespoke_dir, horizon_days=horizon_days,
+                    renderer=renderer, nav_renderer=nav_renderer,
+                    feedback_retries=settings.author_feedback_retries,
+                )
+            ]
+            for o in outcomes:
+                typer.echo(f"{o.mosque_id}: outcome={o.outcome} model={o.model}")
+        else:
+            typer.echo(
+                f"Authoring remaining candidates (concurrency={workers}). "
+                "Completed sources are skipped automatically; Ctrl-C stops cleanly "
+                "and the run resumes where it left off on the next invocation."
+            )
+            outcomes = run_authoring(
+                engine, harness=harness, candidate_root=root, models=models,
                 fallback=fb, fallback_model=fb_model,
-                bespoke_root=settings.bespoke_dir, horizon_days=horizon_days,
+                bespoke_root=settings.bespoke_dir,
+                max_calls=max_calls or settings.author_max_calls,
+                concurrency=workers,
+                horizon_days=horizon_days,
                 renderer=renderer, nav_renderer=nav_renderer,
                 feedback_retries=settings.author_feedback_retries,
+                on_outcome=report,
             )
-        ]
-    else:
-        outcomes = run_authoring(
-            engine, harness=harness, candidate_root=root, models=models,
-            fallback=fb, fallback_model=fb_model,
-            bespoke_root=settings.bespoke_dir,
-            max_calls=max_calls or settings.author_max_calls,
-            concurrency=concurrency or settings.author_concurrency,
-            horizon_days=horizon_days,
-            renderer=renderer, nav_renderer=nav_renderer,
-            feedback_retries=settings.author_feedback_retries,
+    except KeyboardInterrupt:
+        request_shutdown()  # idempotent: ensure no agent subprocess is left running
+        typer.secho(
+            f"\nInterrupted after {sum(tally.values())} mosque(s) in {elapsed():.0f}s; "
+            "in-flight agents terminated.",
+            err=True, fg=typer.colors.YELLOW,
         )
-    for o in outcomes:
-        typer.echo(f"{o.mosque_id}: outcome={o.outcome} model={o.model}")
-    typer.echo(f"Authored {len(outcomes)} mosque(s)")
+        if tally:
+            typer.secho("  " + _summarise(tally), err=True)
+        raise typer.Exit(130) from None
+
+    if tally:
+        typer.echo("Summary: " + _summarise(tally))
+    typer.echo(f"Authored {len(outcomes)} mosque(s) in {elapsed():.0f}s")
 
 
 @app.command()
@@ -322,30 +380,36 @@ def reauthor(
     load_bespoke(settings.bespoke_dir)  # a retained config may reference a bespoke module
     renderer = render_playwright if render_js else None
     nav_renderer = render_playwright_nav if render_js else None
-    if verify_only:
-        outcomes = run_verify_retry(
-            engine, horizon_days=horizon_days,
-            concurrency=concurrency or settings.discover_concurrency,
-            renderer=renderer, nav_renderer=nav_renderer,
-        )
-        for o in outcomes:
-            typer.echo(f"{o.source_id}: status={o.triage_status} rows={o.rows_written}")
-        recovered = sum(1 for o in outcomes if o.triage_status != "needs_reauthor")
-        typer.echo(f"Verified {len(outcomes)} source(s); recovered {recovered}")
-        return
+    try:
+        if verify_only:
+            outcomes = run_verify_retry(
+                engine, horizon_days=horizon_days,
+                concurrency=concurrency or settings.discover_concurrency,
+                renderer=renderer, nav_renderer=nav_renderer,
+            )
+            for o in outcomes:
+                typer.echo(f"{o.source_id}: status={o.triage_status} rows={o.rows_written}")
+            recovered = sum(1 for o in outcomes if o.triage_status != "needs_reauthor")
+            typer.echo(f"Verified {len(outcomes)} source(s); recovered {recovered}")
+            return
 
-    harness, models, fb, fb_model = _build_harness(
-        settings, harness_name=harness_name or settings.author_harness,
-        fallback=fallback, agentic=agentic,
-    )
-    outcomes = run_reauthor(
-        engine, harness=harness, candidate_root=settings.candidate_dir, models=models,
-        fallback=fb, fallback_model=fb_model, bespoke_root=settings.bespoke_dir,
-        max_calls=max_calls or settings.author_max_calls,
-        concurrency=concurrency or settings.author_concurrency,
-        horizon_days=horizon_days, renderer=renderer, nav_renderer=nav_renderer,
-        feedback_retries=settings.author_feedback_retries,
-    )
+        harness, models, fb, fb_model = _build_harness(
+            settings, harness_name=harness_name or settings.author_harness,
+            fallback=fallback, agentic=agentic,
+        )
+        outcomes = run_reauthor(
+            engine, harness=harness, candidate_root=settings.candidate_dir, models=models,
+            fallback=fb, fallback_model=fb_model, bespoke_root=settings.bespoke_dir,
+            max_calls=max_calls or settings.author_max_calls,
+            concurrency=concurrency or settings.author_concurrency,
+            horizon_days=horizon_days, renderer=renderer, nav_renderer=nav_renderer,
+            feedback_retries=settings.author_feedback_retries,
+        )
+    except KeyboardInterrupt:
+        request_shutdown()  # idempotent: ensure no agent subprocess is left running
+        typer.secho("\nInterrupted; in-flight agents terminated.",
+                    err=True, fg=typer.colors.YELLOW)
+        raise typer.Exit(130) from None
     for o in outcomes:
         typer.echo(f"{o.mosque_id}: outcome={o.outcome} model={o.model}")
     authored = sum(1 for o in outcomes if o.outcome in {"authored", "review", "deferred_media"})

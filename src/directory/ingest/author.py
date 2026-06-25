@@ -3,7 +3,7 @@ import json
 import threading
 from collections import Counter
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -14,7 +14,12 @@ from directory.ingest.discover import CandidateBundle
 from directory.ingest.extractors.bespoke import load_bespoke, save_module
 from directory.ingest.extractors.config_schema import SourceConfig
 from directory.ingest.fetch import fetch
-from directory.ingest.harness import AuthorHarness
+from directory.ingest.harness import (
+    AuthorHarness,
+    is_shutting_down,
+    request_shutdown,
+    reset_shutdown,
+)
 from directory.ingest.jsonscan import first_json_object
 from directory.ingest.prompt import (
     build_author_prompt,
@@ -23,6 +28,11 @@ from directory.ingest.prompt import (
 )
 from directory.ingest.runner import ExtractOutcome, extract_source
 from directory.models import Mosque
+
+# Progress callback for the long-running funnels: (completed_count, total,
+# result). ``result`` is None when a worker did no chargeable work (e.g. the
+# spend budget was exhausted and the item was never dispatched).
+ProgressFn = Callable[[int, int, object], None]
 
 
 @dataclass
@@ -200,7 +210,14 @@ def author_mosque(
             # error so the tool-enabled agent can verify and fix it.
             attempts = 1 + (feedback_retries if stage.feedback else 0)
             for _ in range(attempts):
+                # A shutdown (operator Ctrl-C) killed in-flight agents; bail out
+                # without writing a terminal status so this source stays a
+                # 'candidate' and is picked up cleanly on the next run.
+                if is_shutting_down():
+                    raise KeyboardInterrupt
                 res = stage.harness.run(prompt, model=model)
+                if is_shutting_down():
+                    raise KeyboardInterrupt
                 outcome, detail = _attempt(
                     ctx, mosque_id, res, default_url, stage.harness.name, model,
                     allow_bespoke=stage.allow_bespoke,
@@ -228,6 +245,7 @@ def run_verify_retry(
     renderer=None,
     nav_renderer=None,
     concurrency: int = 16,
+    on_outcome: ProgressFn | None = None,
 ) -> list[ExtractOutcome]:
     """Free recovery pass: re-run extraction on every ``needs_reauthor`` source
     that still holds a config, with NO model call. Salvages render-flakiness
@@ -244,9 +262,10 @@ def run_verify_retry(
             fetcher=fetcher, renderer=renderer, nav_renderer=nav_renderer,
         )
 
-    # source_ids are id-ordered; pool.map preserves order → deterministic results.
-    with ThreadPoolExecutor(max_workers=max(1, concurrency)) as pool:
-        return list(pool.map(_one, source_ids))
+    # source_ids are id-ordered; _drain_pool preserves submission order → results
+    # stay deterministic regardless of completion order.
+    results = _drain_pool(source_ids, _one, concurrency=concurrency, on_each=on_outcome)
+    return [o for o in results if o is not None]
 
 
 def order_by_city_size(mosques: list[Mosque]) -> list[Mosque]:
@@ -285,6 +304,54 @@ class Budget:
 _FREE_OUTCOMES = {"no_candidate", "skipped"}
 
 
+def _drain_pool[T](
+    items: list,
+    worker: Callable[[object], T | None],
+    *,
+    concurrency: int,
+    on_each: ProgressFn | None = None,
+) -> list[T | None]:
+    """Run ``worker`` over ``items`` across a thread pool, returning results in
+    submission order (deterministic). ``on_each(done, total, result)`` is invoked
+    on the main thread as each item completes, so callers get live progress
+    instead of a single blocking batch.
+
+    On ``KeyboardInterrupt`` (operator Ctrl-C): latch a shutdown so every live
+    agent subprocess is terminated, stop dispatching queued work, and re-raise so
+    the caller can print a summary. Workers already running observe the shutdown
+    latch and abort without writing a terminal status."""
+    total = len(items)
+    results: list[T | None] = [None] * total
+    if not items:
+        return results
+
+    reset_shutdown()
+    stop = threading.Event()
+
+    def _guarded(idx_item: tuple[int, object]) -> T | None:
+        _, item = idx_item
+        if stop.is_set() or is_shutting_down():
+            return None
+        return worker(item)
+
+    pool = ThreadPoolExecutor(max_workers=max(1, concurrency))
+    futures = {pool.submit(_guarded, (i, item)): i for i, item in enumerate(items)}
+    try:
+        done = 0
+        for fut in as_completed(futures):
+            results[futures[fut]] = fut.result()
+            done += 1
+            if on_each is not None:
+                on_each(done, total, results[futures[fut]])
+        pool.shutdown(wait=True)
+    except KeyboardInterrupt:
+        stop.set()
+        request_shutdown()  # kill in-flight agent process groups
+        pool.shutdown(wait=False, cancel_futures=True)
+        raise
+    return results
+
+
 def run_authoring(
     engine,
     *,
@@ -303,6 +370,7 @@ def run_authoring(
     renderer=None,
     nav_renderer=None,
     feedback_retries: int = 1,
+    on_outcome: ProgressFn | None = None,
 ) -> list[AuthorOutcome]:
     with session_scope(engine) as s:
         candidates = repo.candidate_sources(s)
@@ -316,18 +384,26 @@ def run_authoring(
         # Reserve before the (paid) harness call; budget-exhausted → don't dispatch.
         if not budget.try_reserve():
             return None
-        out = author_mosque(
-            engine, mid, harness=harness, candidate_root=candidate_root, models=models,
-            fallback=fallback, fallback_model=fallback_model, bespoke_root=bespoke_root,
-            today=today, horizon_days=horizon_days, fetcher=fetcher, renderer=renderer,
-            nav_renderer=nav_renderer, feedback_retries=feedback_retries,
-        )
+        # Snapshot the pre-author state so an operator Ctrl-C mid-attempt rolls the
+        # source back to 'candidate' (even if the verify window had already written
+        # a provisional 'authored'), leaving the run cleanly resumable.
+        snap = _snapshot_source(engine, mid)
+        try:
+            out = author_mosque(
+                engine, mid, harness=harness, candidate_root=candidate_root, models=models,
+                fallback=fallback, fallback_model=fallback_model, bespoke_root=bespoke_root,
+                today=today, horizon_days=horizon_days, fetcher=fetcher, renderer=renderer,
+                nav_renderer=nav_renderer, feedback_retries=feedback_retries,
+            )
+        except KeyboardInterrupt:
+            if snap is not None:
+                _restore_source(engine, mid, snap)
+            raise
         if out.outcome in _FREE_OUTCOMES:
             budget.refund()
         return out
 
-    with ThreadPoolExecutor(max_workers=max(1, concurrency)) as pool:
-        results = list(pool.map(_worker, ordered_ids))
+    results = _drain_pool(ordered_ids, _worker, concurrency=concurrency, on_each=on_outcome)
     return [o for o in results if o is not None]
 
 
@@ -338,6 +414,7 @@ class _SourceSnapshot:
     shape: str | None
     config: str | None
     requires_js: bool
+    triage_status: str | None
 
 
 def _snapshot_source(engine, mosque_id: str) -> _SourceSnapshot | None:
@@ -345,15 +422,23 @@ def _snapshot_source(engine, mosque_id: str) -> _SourceSnapshot | None:
         src = repo.get_source(s, mosque_id)
         if src is None:
             return None
-        return _SourceSnapshot(src.url, src.platform, src.shape, src.config, bool(src.requires_js))
+        return _SourceSnapshot(
+            src.url, src.platform, src.shape, src.config,
+            bool(src.requires_js), src.triage_status,
+        )
 
 
 def _restore_source(engine, mosque_id: str, snap: _SourceSnapshot) -> None:
+    """Put a source back exactly as it was before an authoring attempt — same
+    config and the same triage status (so an interrupted ``candidate`` reverts to
+    ``candidate`` and stays resumable, and a re-author rollback reverts to
+    ``needs_reauthor``)."""
     with session_scope(engine, write=True) as s:
         repo.create_or_update_source(
             s, source_id=mosque_id, mosque_id=mosque_id, url=snap.url,
             platform=snap.platform, shape=snap.shape, config=snap.config,
-            requires_js=snap.requires_js, triage_status="needs_reauthor",
+            requires_js=snap.requires_js,
+            triage_status=snap.triage_status or "needs_reauthor",
         )
 
 
@@ -374,6 +459,7 @@ def run_reauthor(
     renderer=None,
     nav_renderer=None,
     feedback_retries: int = 1,
+    on_outcome: ProgressFn | None = None,
 ) -> list[AuthorOutcome]:
     """Model re-authoring of the ``needs_reauthor`` cohort (the paid recovery path;
     run ``run_verify_retry`` first for the free salvage). Only sources that still
@@ -406,6 +492,5 @@ def run_reauthor(
             _restore_source(engine, mid, snap)
         return out
 
-    with ThreadPoolExecutor(max_workers=max(1, concurrency)) as pool:
-        results = list(pool.map(_worker, ids))
+    results = _drain_pool(ids, _worker, concurrency=concurrency, on_each=on_outcome)
     return [o for o in results if o is not None]
