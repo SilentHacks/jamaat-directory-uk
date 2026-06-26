@@ -55,7 +55,7 @@ def _build_harness(settings, *, harness_name: str, fallback: bool, agentic: bool
     --agentic browses at @low. opencode: the legacy cheap→strong ladder (the
     high-effort --fallback knob does not apply)."""
     if harness_name == "claude-code":
-        harness = ClaudeCodeHarness()
+        harness = ClaudeCodeHarness(timeout=settings.author_harness_timeout)
         models = (settings.claude_code_model,)
         if fallback:
             models = (*models, settings.claude_code_fallback_model)
@@ -69,7 +69,7 @@ def _build_harness(settings, *, harness_name: str, fallback: bool, agentic: bool
         )
         return harness, models, fb, settings.claude_code_agentic_model
     if harness_name == "opencode":
-        harness = OpenCodeHarness()
+        harness = OpenCodeHarness(timeout=settings.author_harness_timeout)
         models = (settings.author_model_cheap, settings.author_model_strong)
         fb = (
             OpenCodeAgenticHarness(

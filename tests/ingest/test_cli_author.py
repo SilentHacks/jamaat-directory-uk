@@ -81,6 +81,22 @@ def test_author_defaults_to_claude_code_opus_low(monkeypatch, tmp_path):
     assert captured["fallback"] is None  # no agentic, no high-effort fallback
 
 
+def test_author_harness_timeout_comes_from_settings(monkeypatch, tmp_path):
+    import directory.cli as cli
+
+    captured = {}
+    monkeypatch.setenv("DIRECTORY_DB_PATH", str(tmp_path / "t.db"))
+    monkeypatch.setenv("DIRECTORY_AUTHOR_HARNESS_TIMEOUT", "777")
+    monkeypatch.setattr(cli, "run_authoring", lambda engine, **kw: captured.update(kw) or [])
+
+    runner.invoke(cli.app, ["init-db"])
+    result = runner.invoke(cli.app, ["author"])
+    assert result.exit_code == 0
+    # The single-shot harness must carry the configured ceiling, not the 300s
+    # default that guillotined WebFetch recoveries.
+    assert captured["harness"]._timeout == 777.0
+
+
 def test_author_fallback_flag_appends_high_effort(monkeypatch, tmp_path):
     import directory.cli as cli
 

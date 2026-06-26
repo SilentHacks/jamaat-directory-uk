@@ -23,6 +23,12 @@ class Settings(BaseSettings):
     claude_code_fallback_model: str = "opus@high"
     claude_code_agentic_model: str = "opus@low"
     author_max_calls: int = 50
+    # Hard subprocess ceiling for one single-shot harness call. A tool-enabled
+    # agent that re-fetches the live page (WebFetch) to verify its selectors needs
+    # headroom past a bare generation; 300s guillotined those recoveries mid-flight
+    # (3/10 timeouts on a byteplus eval), so the floor is 600s. The agentic browse
+    # stage keeps its own (longer) ceiling.
+    author_harness_timeout: float = 600.0
     # Corrective re-prompts on the single-shot stage: a rejected config is re-fed
     # its own verify error so the tool-enabled agent can fix it. 0 disables.
     author_feedback_retries: int = 1
