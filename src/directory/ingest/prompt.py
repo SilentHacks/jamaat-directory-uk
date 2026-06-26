@@ -460,17 +460,40 @@ def build_terminal_classification_prompt(evidence: list[PageEvidence]) -> str:
     return "\n".join(parts)
 
 
-def build_unknown_prompt(evidence: list[PageEvidence]) -> str:
-    """Last-resort narrow prompt for a page that fits no clean category: show a
-    compact summary of what is on each page plus the full config schema."""
-    parts = ["Author a prayer-timetable config from this site. Page summaries:"]
-    for page in evidence:
-        parts.append(f"\n--- {page.url} (class: {page.page_class}) ---")
-        if page.tables:
-            parts.append(f"tables: {[t.table_id for t in page.tables]}")
-        if page.media_links:
-            parts.append(f"media: {[m.url for m in page.media_links[:3]]}")
-        parts.append(f"text: {page.visible_text_sample[:300]}")
+def build_unknown_prompt(
+    bundle: CandidateBundle,
+    evidence: list[PageEvidence],
+    *,
+    max_region_chars: int = 6000,
+    max_candidates: int = 5,
+) -> str:
+    """Last-resort prompt for pages that fit no clean category (no parseable table,
+    media or widget). A bare text summary left the model nothing to author selectors
+    from, so include the windowed region MARKUP for each candidate page (the real
+    DOM — post-render after A1) alongside a compact evidence summary, then the full
+    schema. Data first, rules last."""
+    region_by_url = {c.url: c.region_html for c in bundle.candidates}
+    summary_by_url = {e.url: e for e in evidence}
+    parts = [
+        "Author a UK mosque's congregational (jamaah) prayer-timetable config from "
+        "this site. Each candidate shows a compact evidence summary then a windowed "
+        "HTML region centred on the prayer times. If a region is truncated, you MAY "
+        "use WebFetch to load the live page before authoring.",
+        "",
+        "Candidate pages (most likely first):",
+    ]
+    for c in bundle.candidates[:max_candidates]:
+        parts.append(f"\n--- {c.url} ---")
+        page = summary_by_url.get(c.url)
+        if page is not None:
+            parts.append(f"page_class: {page.page_class}")
+            if page.media_links:
+                parts.append(f"media: {[m.url for m in page.media_links[:3]]}")
+            if page.widget_hints:
+                parts.append(
+                    f"widgets: {[(w.provider, w.data_url) for w in page.widget_hints]}"
+                )
+        parts.append(_window_region(region_by_url.get(c.url, ""), max_region_chars))
     parts.append("")
     parts.append(_SCHEMA_HINT)
     return "\n".join(parts)
@@ -498,16 +521,14 @@ def route_prompt_kind(evidence: list[PageEvidence]) -> PromptKind:
     return PromptKind.UNKNOWN
 
 
-# kind → builder. Builders that ignore the bundle/failed args still take them so the
-# dispatch is uniform. LEGACY is handled in build_prompt (it needs the bundle, not
-# the evidence).
+# kind → builder over the evidence. LEGACY and UNKNOWN are handled in build_prompt
+# (they need the bundle's windowed region markup, not just the evidence summary).
 _PROMPT_BUILDERS = {
     PromptKind.TABLE_CHOICE: lambda evidence, failed: build_table_choice_prompt(evidence, failed),
     PromptKind.TABLE_REPAIR: lambda evidence, failed: build_table_repair_prompt(evidence, failed),
     PromptKind.MEDIA: lambda evidence, failed: build_media_prompt(evidence),
     PromptKind.WIDGET: lambda evidence, failed: build_widget_prompt(evidence),
     PromptKind.TERMINAL: lambda evidence, failed: build_terminal_classification_prompt(evidence),
-    PromptKind.UNKNOWN: lambda evidence, failed: build_unknown_prompt(evidence),
 }
 
 
@@ -519,7 +540,10 @@ def build_prompt(
 ) -> str:
     """Build the prompt for ``kind``. ``legacy`` (or any evidence-less bundle) falls
     back to the single-shot prompt, so pre-evidence bundles behave exactly as
-    before."""
+    before. ``unknown`` carries the windowed region markup alongside the evidence
+    summary, so a page that fit no clean category still gives the model real DOM."""
     if kind is PromptKind.LEGACY or not evidence:
         return build_author_prompt(bundle)
+    if kind is PromptKind.UNKNOWN:
+        return build_unknown_prompt(bundle, evidence)
     return _PROMPT_BUILDERS[kind](evidence, failed)
