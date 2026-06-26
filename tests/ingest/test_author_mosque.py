@@ -170,6 +170,40 @@ UNSUPPORTED_WIDGET_OUTPUT = json.dumps(
 )
 
 
+NO_INDEX_OUTPUT = json.dumps(
+    {
+        "url": "https://m1.example/prayer-times",
+        "config": {
+            "shape": "html_table",
+            "grid": {
+                "table_selector": "table.t",
+                "date": {"index": 0},
+                # Every column omits its 0-based "index" → the engine would read
+                # nothing. C8 rejects this with an actionable reason pre-replay.
+                "columns": [
+                    {"kind": "jamaah", "prayer": "fajr"},
+                    {"kind": "jamaah", "prayer": "dhuhr"},
+                ],
+            },
+        },
+    }
+)
+
+
+def test_structurally_broken_config_marks_needs_reauthor(engine, tmp_path):
+    _candidate_mosque(engine)
+    _bundle().save(tmp_path)
+    harness = FakeHarness(NO_INDEX_OUTPUT)
+
+    out = author_mosque(engine, "m1", harness=harness, candidate_root=tmp_path,
+                        models=("cheap", "strong"), today=date(2026, 6, 1), horizon_days=5,
+                        fetcher=_fetcher, feedback_retries=0)
+
+    assert out.outcome == "needs_reauthor"
+    with session_scope(engine) as s:
+        assert repo.get_source(s, "m1").triage_status == "needs_reauthor"
+
+
 def test_unsupported_widget_platform_marks_needs_reauthor(engine, tmp_path):
     # A widget platform with no registered extractor must NOT raise out of the
     # worker (which would abort a whole batch) — it is a failed attempt.

@@ -29,7 +29,7 @@ from directory.ingest.diagnosis import (
 from directory.ingest.discover import CandidateBundle
 from directory.ingest.evidence import PageEvidence
 from directory.ingest.extractors.bespoke import load_bespoke, save_module
-from directory.ingest.extractors.config_schema import SourceConfig
+from directory.ingest.extractors.config_schema import SourceConfig, authoring_problems
 from directory.ingest.extractors.engine import WIDGET_EXTRACTORS
 from directory.ingest.failure import classify_failure, feedback_prompt_kind
 from directory.ingest.fetch import fetch
@@ -169,19 +169,24 @@ def _config_from_decision(
     decision: AuthorDecision, evidence: list[PageEvidence], ctx: _Ctx, allow_bespoke: bool
 ) -> SourceConfig:
     """Materialize a SourceConfig from a non-terminal decision, handling the bespoke
-    module side effect. Raises ValueError on anything unusable."""
+    module side effect. Raises ValueError on anything unusable — the funnel turns
+    that into an "invalid config" attempt that feeds the model an actionable reason,
+    rather than letting a structurally-broken config reach the engine and silently
+    extract zero rows (a "no occurrences" rejection the model cannot learn from)."""
     if decision.outcome == "table_mapping":
-        return config_from_table_mapping(decision, evidence)
-    config = decision.config
-    if config is None:
-        raise ValueError("decision produced no config")
-    if config.shape == "bespoke":
-        if not allow_bespoke or ctx.bespoke_root is None:
-            raise ValueError("bespoke shape only allowed from the agentic fallback")
-        if not decision.module_code:
-            raise ValueError("bespoke config without module_code")
-        save_module(config.bespoke.module, decision.module_code, root=ctx.bespoke_root)
-        load_bespoke(ctx.bespoke_root)
+        config = config_from_table_mapping(decision, evidence)
+    else:
+        config = decision.config
+        if config is None:
+            raise ValueError("decision produced no config")
+        if config.shape == "bespoke":
+            if not allow_bespoke or ctx.bespoke_root is None:
+                raise ValueError("bespoke shape only allowed from the agentic fallback")
+            if not decision.module_code:
+                raise ValueError("bespoke config without module_code")
+            save_module(config.bespoke.module, decision.module_code, root=ctx.bespoke_root)
+            load_bespoke(ctx.bespoke_root)
+
     if config.shape == "widget":
         # A widget platform with no registered extractor would raise deep in
         # extraction (uncaught) and abort the whole authoring batch. Reject it
@@ -192,6 +197,10 @@ def _config_from_decision(
                 f"unsupported widget platform {platform!r}; "
                 f"supported: {sorted(WIDGET_EXTRACTORS)}"
             )
+
+    problems = authoring_problems(config)
+    if problems:
+        raise ValueError("; ".join(problems))
     return config
 
 
