@@ -123,6 +123,22 @@ def test_run_reauthor_restores_prior_config_on_failure(engine, tmp_path):
         assert repo.get_source(s, "m1").config == GOOD_CONFIG  # prior config restored
 
 
+def test_run_reauthor_terminal_verdict_does_not_discard_retained_config(engine, tmp_path):
+    """A model that returns a terminal no_timetable verdict during re-author must
+    not shelve a retained (flaky-but-correct) config that verify-retry could not
+    salvage — the prior config and status are restored."""
+    _reauthor_candidate(engine, "m1", tmp_path, config=GOOD_CONFIG)
+    harness = FakeHarness(json.dumps({"outcome": "no_timetable", "reason": "looks empty"}))
+    outs = run_reauthor(engine, harness=harness, candidate_root=tmp_path,
+                        models=("opus@low",), today=date(2026, 6, 1), horizon_days=5,
+                        fetcher=_fetcher)
+    assert [o.outcome for o in outs] == ["no_timetable"]
+    with session_scope(engine) as s:
+        src = repo.get_source(s, "m1")
+        assert src.config == GOOD_CONFIG          # prior config restored
+        assert src.triage_status == "needs_reauthor"  # not shelved as no_timetable
+
+
 def test_run_reauthor_skips_sources_without_a_bundle(engine, tmp_path):
     """A deterministic-discovery source has no candidate bundle to prompt from;
     model re-author leaves it untouched (no model call, no demotion)."""
