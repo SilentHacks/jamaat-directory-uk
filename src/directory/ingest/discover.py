@@ -12,6 +12,11 @@ from bs4 import BeautifulSoup
 from directory import repository as repo
 from directory.db import session_scope
 from directory.ingest.blocklist import is_blocklisted
+from directory.ingest.config_enumerator import (
+    best_verified_candidate,
+    cached_fetcher,
+    enumerate_candidates,
+)
 from directory.ingest.evidence import (
     _TIME_SCAN_RE,
     PageEvidence,
@@ -27,6 +32,7 @@ from directory.ingest.gates import run_gates
 from directory.ingest.materialize import materialize
 from directory.ingest.pager import collect_documents, extract_documents
 from directory.ingest.runner import extract_source
+from directory.ingest.verify import persist_verified_candidate
 
 # Re-exported for callers/tests that import these from discover (their historical
 # home); the implementation now lives in evidence.py so it is shared without a
@@ -473,12 +479,33 @@ def discover_mosque(
         )
         return DiscoverOutcome(mosque_id, result.triage_status, match.platform)
 
-    # Deterministic miss → build structured evidence once (reused for the terminal
-    # check and the AI hand-off bundle).
+    # Deterministic miss → build structured evidence once (reused for the
+    # enumerator, the terminal check, and the AI hand-off bundle).
     evidences = [
         build_page_evidence(html, url, today=today)
         for url, html in fetched_pages.items()
     ]
+
+    # Deterministic config enumeration: try the obvious configs the evidence implies
+    # (media/PDF links, widgets, extra table orientations) and verify them in memory
+    # against the already-fetched pages. The platform detectors above cover inline
+    # tables; this primarily recovers media-only and widget sources for £0 before
+    # the AI funnel. Persist the best verified candidate, if any.
+    enum_candidates = enumerate_candidates(evidences)
+    if enum_candidates:
+        recovered = best_verified_candidate(
+            enum_candidates, today=today, horizon_days=horizon_days,
+            fetcher=cached_fetcher(fetched_pages, fetcher),
+            renderer=renderer, nav_renderer=nav_renderer,
+        )
+        if recovered is not None:
+            out = persist_verified_candidate(
+                engine, mosque_id, recovered, authored_by="enumerator"
+            )
+            return DiscoverOutcome(
+                mosque_id, out.triage_status,
+                recovered.candidate.platform or "enumerator",
+            )
 
     # Conservative terminal classification: if every usable page is conclusively
     # not a timetable (under construction / parked / wrong site / empty) and no
