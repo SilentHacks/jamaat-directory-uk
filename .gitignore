@@ -11,6 +11,7 @@ uv.lock.bak
 
 # Project data (never commit the DB, seed exports, or candidate cache)
 data/candidates/
+data/authoring-runs/
 data/*.db
 data/*.db-wal
 data/*.db-shm
