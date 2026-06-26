@@ -1,0 +1,15 @@
+{
+  "mosque_id": "case-empty",
+  "base_url": "https://ex.example/",
+  "pages": [
+    {
+      "url": "https://ex.example/",
+      "html_fixture": "empty.html"
+    }
+  ],
+  "expected": {
+    "triage_status": "no_timetable",
+    "last_status": "empty_page",
+    "model_used": false
+  }
+}

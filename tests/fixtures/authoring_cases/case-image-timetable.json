@@ -1,0 +1,16 @@
+{
+  "mosque_id": "case-image-timetable",
+  "base_url": "https://ex.example/",
+  "pages": [
+    {
+      "url": "https://ex.example/",
+      "html_fixture": "image_home.html"
+    }
+  ],
+  "expected": {
+    "triage_status": "deferred_media",
+    "platform": "enumerator",
+    "config_shape": "image",
+    "model_used": false
+  }
+}

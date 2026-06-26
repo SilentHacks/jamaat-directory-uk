@@ -1,0 +1,15 @@
+{
+  "mosque_id": "case-wrong-site",
+  "base_url": "https://ex.example/",
+  "pages": [
+    {
+      "url": "https://ex.example/",
+      "html_fixture": "restaurant.html"
+    }
+  ],
+  "expected": {
+    "triage_status": "no_timetable",
+    "last_status": "wrong_site",
+    "model_used": false
+  }
+}

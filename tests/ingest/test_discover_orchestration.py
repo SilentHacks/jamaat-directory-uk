@@ -261,3 +261,30 @@ def test_run_discovery_covers_all(engine, tmp_path):
     outs = run_discovery(engine, fetcher=fetcher, client=client, candidate_root=tmp_path,
                          today=date(2026, 6, 1), horizon_days=20)
     assert {o.mosque_id for o in outs} == {"wp"}  # the null-website mosque is skipped
+
+
+PDF_ONLY_PAGE = (
+    '<html><body><h1>Prayer Times</h1>'
+    '<a href="/june-2026-prayer-timetable.pdf">June 2026 Prayer Timetable</a>'
+    '</body></html>'
+)
+
+
+def test_media_only_page_defers_via_enumerator_without_ai(engine, tmp_path):
+    """A page whose timetable is only a (clearly named) PDF is recovered by the
+    deterministic enumerator as deferred_media — no AI hand-off bundle written."""
+    from datetime import date
+
+    _mosque(engine, "pdf", "https://pdf.example/")
+    fetcher = _fetcher_for({"https://pdf.example/": PDF_ONLY_PAGE})
+
+    out = discover_mosque(engine, "pdf", fetcher=fetcher, client=_live_client(),
+                          candidate_root=tmp_path, today=date(2026, 6, 1), horizon_days=20)
+
+    assert out.outcome == "deferred_media"
+    assert not (tmp_path / "pdf.json").exists()  # no AI bundle: resolved deterministically
+    with session_scope(engine) as s:
+        src = repo.get_source(s, "pdf")
+        assert src.triage_status == "deferred_media"
+        assert src.shape == "pdf"
+        assert "june-2026-prayer-timetable.pdf" in src.config

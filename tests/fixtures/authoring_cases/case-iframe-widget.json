@@ -1,0 +1,14 @@
+{
+  "mosque_id": "case-iframe-widget",
+  "base_url": "https://ex.example/",
+  "pages": [
+    {
+      "url": "https://ex.example/",
+      "html_fixture": "iframe_widget.html"
+    }
+  ],
+  "expected": {
+    "triage_status": "candidate",
+    "model_used": false
+  }
+}

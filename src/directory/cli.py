@@ -7,10 +7,16 @@ import typer
 from directory.config import Settings
 from directory.db import init_db, make_engine
 from directory.ingest.author import (
+    SPEND_KEYS,
+    AuthorOutcome,
     author_mosque,
+    categorize_outcome,
+    diagnose_candidate,
     run_authoring,
     run_reauthor,
     run_verify_retry,
+    summarize_outcomes,
+    tally_outcome,
 )
 from directory.ingest.blocklist import load_blocklist
 from directory.ingest.discover import discover_mosque, run_discovery
@@ -90,11 +96,20 @@ def _make_reporter(label: str):
     def report(done: int, total: int, result) -> None:
         if result is None:  # budget exhausted / not dispatched — nothing to show
             return
-        status = getattr(result, "outcome", None) or getattr(result, "triage_status", "?")
-        ident = getattr(result, "mosque_id", None) or getattr(result, "source_id", "?")
-        model = getattr(result, "model", None)
-        rows = getattr(result, "rows_written", None)
-        tally[status] += 1
+        if isinstance(result, AuthorOutcome):
+            # One bucketing rule, shared with the end-of-run summary, so the live
+            # progress and the final tally cannot drift.
+            tally_outcome(tally, result)
+            status = categorize_outcome(result)
+            ident = result.mosque_id
+            model = result.model
+            rows = None
+        else:
+            status = getattr(result, "outcome", None) or getattr(result, "triage_status", "?")
+            ident = getattr(result, "mosque_id", None) or getattr(result, "source_id", "?")
+            model = getattr(result, "model", None)
+            rows = getattr(result, "rows_written", None)
+            tally[status] += 1
         extra = f" model={model}" if model else ""
         if rows is not None:
             extra += f" rows={rows}"
@@ -274,6 +289,11 @@ def author(
         help="Opt in to the high-effort fallback model (claude-code: Opus 4.8 @high)",
     ),
     agentic: bool = typer.Option(False, "--agentic", help="Enable the stage-4 agentic fallback"),  # noqa: B008
+    no_model: bool = typer.Option(  # noqa: B008
+        False, "--no-model",
+        help="Deterministic only: run evidence + enumerator, never call a model "
+        "(measures deterministic recovery before paying for model calls)",
+    ),
     concurrency: int | None = typer.Option(  # noqa: B008
         None, "--concurrency", help="Parallel authoring workers (default from settings)"
     ),
@@ -284,7 +304,8 @@ def author(
 ) -> None:
     """Single-shot authoring of candidate sources via the agent harness. Defaults
     to Claude Code with Opus 4.8 at low effort; --fallback opts into a high-effort
-    retry, --agentic adds the browsing fallback (at low effort)."""
+    retry, --agentic adds the browsing fallback (at low effort). --no-model runs the
+    deterministic recovery pass alone (no spend)."""
     settings = Settings()
     engine = make_engine(settings.database_url)
     renderer = render_playwright if render_js else None
@@ -293,6 +314,8 @@ def author(
         settings, harness_name=harness_name or settings.author_harness,
         fallback=fallback, agentic=agentic,
     )
+    if no_model:
+        fb = None  # the deterministic pass never reaches a stage, fallback or not
     root = settings.candidate_dir
     workers = concurrency or settings.author_concurrency
     tally, report, elapsed = _make_reporter("outcome")
@@ -304,7 +327,7 @@ def author(
                     fallback=fb, fallback_model=fb_model,
                     bespoke_root=settings.bespoke_dir, horizon_days=horizon_days,
                     renderer=renderer, nav_renderer=nav_renderer,
-                    feedback_retries=settings.author_feedback_retries,
+                    feedback_retries=settings.author_feedback_retries, no_model=no_model,
                 )
             ]
             for o in outcomes:
@@ -323,13 +346,15 @@ def author(
                 concurrency=workers,
                 horizon_days=horizon_days,
                 renderer=renderer, nav_renderer=nav_renderer,
-                feedback_retries=settings.author_feedback_retries,
+                feedback_retries=settings.author_feedback_retries, no_model=no_model,
                 on_outcome=report,
             )
     except KeyboardInterrupt:
         request_shutdown()  # idempotent: ensure no agent subprocess is left running
+        # Count mosques, not calls: the spend keys live in the same tally.
+        mosques = sum(v for k, v in tally.items() if k not in SPEND_KEYS)
         typer.secho(
-            f"\nInterrupted after {sum(tally.values())} mosque(s) in {elapsed():.0f}s; "
+            f"\nInterrupted after {mosques} mosque(s) in {elapsed():.0f}s; "
             "in-flight agents terminated.",
             err=True, fg=typer.colors.YELLOW,
         )
@@ -337,9 +362,64 @@ def author(
             typer.secho("  " + _summarise(tally), err=True)
         raise typer.Exit(130) from None
 
-    if tally:
-        typer.echo("Summary: " + _summarise(tally))
+    summary = summarize_outcomes(outcomes)
+    if summary:
+        typer.echo("Summary: " + _summarise(summary))
     typer.echo(f"Authored {len(outcomes)} mosque(s) in {elapsed():.0f}s")
+
+
+@app.command("inspect-candidate")
+def inspect_candidate(
+    mosque_id: str = typer.Option(..., "--mosque-id", help="Candidate source to inspect"),  # noqa: B008
+    horizon_days: int = typer.Option(60, "--horizon-days", help="Verification horizon"),  # noqa: B008
+    render_js: bool = typer.Option(  # noqa: B008
+        True, "--render-js/--no-render-js",
+        help="Render JS sources (and click month paging) when verifying candidates",
+    ),
+) -> None:
+    """Dry-run a candidate source: print its page classes, the deterministic config
+    candidates and their in-memory verify results, and — if deterministic recovery
+    fails — the narrow prompt kind a model would receive. No DB writes, no model
+    calls."""
+    settings = Settings()
+    engine = make_engine(settings.database_url)
+    load_bespoke(settings.bespoke_dir)  # an enumerated config may reference a bespoke module
+    renderer = render_playwright if render_js else None
+    nav_renderer = render_playwright_nav if render_js else None
+    report = diagnose_candidate(
+        engine, mosque_id, candidate_root=settings.candidate_dir,
+        horizon_days=horizon_days, renderer=renderer, nav_renderer=nav_renderer,
+    )
+    if not report.found_bundle:
+        typer.echo(f"{mosque_id}: no candidate bundle on disk")
+        raise typer.Exit(1)
+
+    typer.echo(f"{mosque_id}: {len(report.pages)} page(s)")
+    for p in report.pages:
+        bits = (
+            f"tables={p.n_tables} media={p.n_media} widgets={p.n_widgets} "
+            f"iframes={p.n_iframes}"
+        )
+        typer.echo(f"  [{p.page_class}] {p.url}  ({bits})")
+        if p.js_hints:
+            typer.echo(f"      js_hints: {', '.join(p.js_hints)}")
+        if p.terminal_hints:
+            typer.echo(f"      terminal_hints: {', '.join(p.terminal_hints)}")
+
+    typer.echo(f"Config candidates: {len(report.candidates)}")
+    for c in report.candidates:
+        mark = "OK" if c.ok else "xx"
+        line = f"  [{mark}] {c.source}: status={c.triage_status} rows={c.rows_count}"
+        typer.echo(line)
+        if not c.ok and c.reasons:
+            typer.echo(f"      {'; '.join(c.reasons)}")
+
+    if report.deterministic_recovered:
+        typer.echo("Deterministic recovery: YES (no model call needed)")
+    else:
+        typer.echo(
+            f"Deterministic recovery: no — model prompt kind would be '{report.prompt_kind}'"
+        )
 
 
 @app.command()

@@ -1,0 +1,22 @@
+{
+  "mosque_id": "case-js-shell-table",
+  "base_url": "https://ex.example/",
+  "pages": [
+    {
+      "url": "https://ex.example/",
+      "html_fixture": "js_shell.html"
+    }
+  ],
+  "rendered": [
+    {
+      "url": "https://ex.example/",
+      "html_fixture": "js_shell_rendered.html"
+    }
+  ],
+  "expected": {
+    "triage_status": "authored",
+    "platform": "generic_table",
+    "config_shape": "html_table",
+    "model_used": false
+  }
+}

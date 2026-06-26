@@ -1,0 +1,16 @@
+{
+  "mosque_id": "case-model-media-pdf",
+  "base_url": "https://ex.example/",
+  "pages": [
+    {
+      "url": "https://ex.example/",
+      "html_fixture": "model_pdf_home.html"
+    }
+  ],
+  "model_output": "{\"outcome\": \"media\", \"kind\": \"pdf\", \"url\": \"https://ex.example/files/doc-0098.pdf\"}",
+  "expected": {
+    "triage_status": "deferred_media",
+    "config_shape": "pdf",
+    "model_used": true
+  }
+}

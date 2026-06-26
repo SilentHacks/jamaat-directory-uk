@@ -1,7 +1,26 @@
 import re
+from enum import StrEnum
 
 from directory.domain import Prayer
 from directory.ingest.discover import CandidateBundle
+from directory.ingest.evidence import MEDIA_TIMETABLE_SCORE, PageEvidence, TableEvidence
+
+
+class PromptKind(StrEnum):
+    """Which narrow authoring prompt a page set warrants. A str-enum so it stays
+    interchangeable with the bare strings the funnel and its tests already use,
+    while giving the routing/registry a single typed vocabulary instead of three
+    modules hardcoding the same literals."""
+
+    LEGACY = "legacy"  # pre-evidence bundle → the single-shot prompt
+    TABLE_CHOICE = "table_choice"  # several tables: pick the timetable, then map it
+    TABLE_REPAIR = "table_repair"  # one table: map its columns
+    MEDIA = "media"  # image/PDF timetable links
+    WIDGET = "widget"  # embedded prayer-time widget
+    TERMINAL = "terminal"  # likely no timetable (under construction / wrong site)
+    UNKNOWN = "unknown"  # fits no clean category → full schema
+    NONE = "none"  # diagnosis-only: deterministic recovery succeeded, no prompt
+
 
 _PRAYERS = ", ".join(p.value for p in Prayer)
 
@@ -258,3 +277,249 @@ def build_browse_prompt(bundle: CandidateBundle) -> str:
             _BROWSE_SCHEMA_HINT,
         ]
     )
+
+
+# ── type-specific evidence prompts (Phase 5) ──────────────────────────────────
+#
+# The single-shot prompt asks a cheap model to solve routing, classification and
+# full-config authoring in one go. These narrow prompts give it ONE job each over
+# compact structured evidence, and ask for the smallest possible answer. The
+# parser (author.parse_decision) accepts every envelope they request.
+
+_PRAYER_LINE = f'- "prayer" is exactly one of: {_PRAYERS}.'
+_KIND_LINE = '- "kind" is "jamaah" (congregation/iqamah) or "begin" (adhan/start time).'
+
+_TABLE_MAPPING_SCHEMA = f"""\
+Return ONE JSON object and nothing else (no prose, no code fences). Prefer the
+compact table_mapping; local code builds the full config from it:
+
+{{
+  "outcome": "table_mapping",
+  "table_id": "<the timetable table's id, e.g. table_0>",
+  "orientation": "horizontal_multiday" | "transpose_multiday"
+               | "horizontal_single_day" | "prayer_rows",
+  "date_index": 0,            // column holding the date (horizontal/transpose multiday)
+  "label_index": 0,           // column holding the prayer name (prayer_rows only)
+  "columns": [
+    {{"kind": "jamaah", "prayer": "fajr", "index": 2, "header_seen": "Fajr Jamaat"}}
+  ]
+}}
+
+Orientations (read the table first):
+- horizontal_multiday: prayer names across the TOP, one DATE per row → set
+  "date_index" and one column per prayer by "index".
+- transpose_multiday: prayer names down the SIDE, DATES across the top → same
+  fields; local code transposes for you (still give post-transpose-free indices
+  as shown in the matrix, with the date column's index).
+- horizontal_single_day: prayers across the top, a single row of today's times,
+  NO date column → omit "date_index".
+- prayer_rows: prayers down a left label column, the header names the kind
+  (Begin/Iqamah) → set "label_index" and leave each column's "prayer" null.
+{_PRAYER_LINE}
+{_KIND_LINE}
+- For a relative offset jamaah column ("+5"), set "value_kind":"offset" (and an
+  optional "base_prayer"); the table must also carry that prayer's begin column.
+
+If a table_mapping cannot capture it, return a full config envelope instead:
+{{"outcome":"config","url":"<page url>","config":{{...SourceConfig...}}}}
+If the page has NO extractable timetable at all, return:
+{{"outcome":"no_timetable","reason":"<why>"}}  (or "wrong_site" if unrelated).
+"""
+
+_MEDIA_SCHEMA = """\
+Return ONE JSON object and nothing else:
+{
+  "outcome": "media",
+  "kind": "image" | "pdf",
+  "url": "<direct URL of the image or PDF timetable>",
+  "page_url": "<the page the link is on (optional)>",
+  "reason": "<why this is the timetable>"
+}
+Pick the single link that is the CURRENT monthly/annual prayer timetable. If none
+of the links is a timetable, return {"outcome":"no_timetable","reason":"<why>"}.
+"""
+
+_WIDGET_SCHEMA = """\
+Return ONE JSON object and nothing else:
+{
+  "outcome": "config",
+  "url": "<the widget/page url>",
+  "config": {"shape": "widget", "widget": {"platform": "<provider>",
+             "data_url": "<optional data/API url>"}}
+}
+Only name a provider whose widget we can read (e.g. mawaqit). If you cannot
+identify a supported provider, return {"outcome":"unknown"}.
+"""
+
+_TERMINAL_SCHEMA = """\
+Return ONE JSON object and nothing else:
+{"outcome": "no_timetable", "reason": "<e.g. site under construction>"}
+Use "outcome":"wrong_site" if the site is unrelated to a mosque (a restaurant,
+parked domain, etc). If you actually see prayer times, return {"outcome":"unknown"}.
+"""
+
+
+def _render_table_evidence(t: TableEvidence) -> str:
+    """A table's evidence as a numbered matrix the model can index into: r0.. rows,
+    c0.. columns, plus the selector/caption/named-prayers hints."""
+    lines = [f"table_id: {t.table_id}"]
+    if t.selector:
+        lines.append(f"selector: {t.selector}")
+    if t.caption:
+        lines.append(f"caption: {t.caption}")
+    lines.append(f"header_depth: {t.header_depth}  prayers_named: {t.prayers_named}")
+    lines.append(f"date_like_columns: {t.date_like_columns}")
+    width = max((len(r) for r in t.matrix), default=0)
+    lines.append("      " + "  ".join(f"c{c}" for c in range(width)))
+    for r, row in enumerate(t.matrix):
+        lines.append(f"  r{r}: " + " | ".join(row))
+    return "\n".join(lines)
+
+
+def _failed_block(failed_attempts: list[tuple[str, str]] | None) -> list[str]:
+    if not failed_attempts:
+        return []
+    out = ["", "Deterministic interpretations already tried, and why each failed:"]
+    out.extend(f"- {src}: {reason}" for src, reason in failed_attempts)
+    return out
+
+
+def _tables_block(evidence: list[PageEvidence]) -> list[str]:
+    out: list[str] = []
+    for page in evidence:
+        if not page.tables:
+            continue
+        out.append(f"\n--- {page.url} ---")
+        out.extend(_render_table_evidence(t) for t in page.tables)
+    return out
+
+
+def build_table_repair_prompt(
+    evidence: list[PageEvidence], failed_attempts: list[tuple[str, str]] | None = None
+) -> str:
+    parts = [
+        "Map a UK mosque's congregational (jamaah) prayer timetable TABLE into a "
+        "column mapping. Tables below are shown as numbered matrices.",
+        *_tables_block(evidence),
+        *_failed_block(failed_attempts),
+        "",
+        _TABLE_MAPPING_SCHEMA,
+    ]
+    return "\n".join(parts)
+
+
+def build_table_choice_prompt(
+    evidence: list[PageEvidence], failed_attempts: list[tuple[str, str]] | None = None
+) -> str:
+    parts = [
+        "A page has several tables. Choose the one that is the prayer timetable and "
+        "map it. Tables below are shown as numbered matrices.",
+        *_tables_block(evidence),
+        *_failed_block(failed_attempts),
+        "",
+        "Set \"table_id\" to the timetable table.",
+        _TABLE_MAPPING_SCHEMA,
+    ]
+    return "\n".join(parts)
+
+
+def build_media_prompt(evidence: list[PageEvidence]) -> str:
+    parts = ["Identify the mosque's prayer-timetable image/PDF among these links:"]
+    for page in evidence:
+        for m in page.media_links:
+            parts.append(f"- [{m.kind}] {m.url}  (text: {m.text!r}, score {m.score})")
+    parts.append("")
+    parts.append(_MEDIA_SCHEMA)
+    return "\n".join(parts)
+
+
+def build_widget_prompt(evidence: list[PageEvidence]) -> str:
+    parts = ["This site embeds a prayer-time widget. Identify the provider:"]
+    for page in evidence:
+        for w in page.widget_hints:
+            parts.append(f"- provider hint: {w.provider} (data_url: {w.data_url})")
+        for ifr in page.iframes:
+            parts.append(f"- iframe: {ifr.url} (provider: {ifr.provider_hint})")
+    parts.append("")
+    parts.append(_WIDGET_SCHEMA)
+    return "\n".join(parts)
+
+
+def build_terminal_classification_prompt(evidence: list[PageEvidence]) -> str:
+    parts = ["Does this site publish a mosque prayer timetable, or is it terminal "
+             "(under construction / wrong site / empty)?"]
+    for page in evidence:
+        parts.append(f"\n--- {page.url} (class: {page.page_class}) ---")
+        if page.title:
+            parts.append(f"title: {page.title}")
+        if page.terminal_hints:
+            parts.append(f"hints: {page.terminal_hints}")
+        parts.append(f"text: {page.visible_text_sample[:400]}")
+    parts.append("")
+    parts.append(_TERMINAL_SCHEMA)
+    return "\n".join(parts)
+
+
+def build_unknown_prompt(evidence: list[PageEvidence]) -> str:
+    """Last-resort narrow prompt for a page that fits no clean category: show a
+    compact summary of what is on each page plus the full config schema."""
+    parts = ["Author a prayer-timetable config from this site. Page summaries:"]
+    for page in evidence:
+        parts.append(f"\n--- {page.url} (class: {page.page_class}) ---")
+        if page.tables:
+            parts.append(f"tables: {[t.table_id for t in page.tables]}")
+        if page.media_links:
+            parts.append(f"media: {[m.url for m in page.media_links[:3]]}")
+        parts.append(f"text: {page.visible_text_sample[:300]}")
+    parts.append("")
+    parts.append(_SCHEMA_HINT)
+    return "\n".join(parts)
+
+
+# ── prompt routing + dispatch (Phase 5) ───────────────────────────────────────
+
+
+def route_prompt_kind(evidence: list[PageEvidence]) -> PromptKind:
+    """The narrow prompt kind that fits the strongest evidence on the page set:
+    table → media → widget → terminal → unknown. An evidence-less (pre-evidence)
+    bundle routes to the legacy single-shot prompt."""
+    if not evidence:
+        return PromptKind.LEGACY
+    if any(len(p.tables) > 1 for p in evidence):
+        return PromptKind.TABLE_CHOICE
+    if any(p.tables for p in evidence):
+        return PromptKind.TABLE_REPAIR
+    if any(m.score >= MEDIA_TIMETABLE_SCORE for p in evidence for m in p.media_links):
+        return PromptKind.MEDIA
+    if any(p.widget_hints for p in evidence):
+        return PromptKind.WIDGET
+    if any(p.terminal_hints for p in evidence):
+        return PromptKind.TERMINAL
+    return PromptKind.UNKNOWN
+
+
+# kind → builder. Builders that ignore the bundle/failed args still take them so the
+# dispatch is uniform. LEGACY is handled in build_prompt (it needs the bundle, not
+# the evidence).
+_PROMPT_BUILDERS = {
+    PromptKind.TABLE_CHOICE: lambda evidence, failed: build_table_choice_prompt(evidence, failed),
+    PromptKind.TABLE_REPAIR: lambda evidence, failed: build_table_repair_prompt(evidence, failed),
+    PromptKind.MEDIA: lambda evidence, failed: build_media_prompt(evidence),
+    PromptKind.WIDGET: lambda evidence, failed: build_widget_prompt(evidence),
+    PromptKind.TERMINAL: lambda evidence, failed: build_terminal_classification_prompt(evidence),
+    PromptKind.UNKNOWN: lambda evidence, failed: build_unknown_prompt(evidence),
+}
+
+
+def build_prompt(
+    kind: PromptKind,
+    bundle: CandidateBundle,
+    evidence: list[PageEvidence],
+    failed: list[tuple[str, str]],
+) -> str:
+    """Build the prompt for ``kind``. ``legacy`` (or any evidence-less bundle) falls
+    back to the single-shot prompt, so pre-evidence bundles behave exactly as
+    before."""
+    if kind is PromptKind.LEGACY or not evidence:
+        return build_author_prompt(bundle)
+    return _PROMPT_BUILDERS[kind](evidence, failed)

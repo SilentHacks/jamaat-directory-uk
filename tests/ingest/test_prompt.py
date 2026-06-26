@@ -130,3 +130,84 @@ def test_prompt_truncates_regions_and_caps_candidate_count():
     p = build_author_prompt(bundle, max_region_chars=100, max_candidates=2)
     assert "x" * 101 not in p          # region truncated
     assert p.count("candidate 3:") == 0  # only 2 candidates rendered
+
+
+# ── type-specific evidence prompts (Phase 5) ──────────────────────────────────
+
+from datetime import date  # noqa: E402
+
+from directory.ingest.evidence import build_page_evidence  # noqa: E402
+from directory.ingest.prompt import (  # noqa: E402
+    build_media_prompt,
+    build_table_choice_prompt,
+    build_table_repair_prompt,
+    build_terminal_classification_prompt,
+    build_unknown_prompt,
+    build_widget_prompt,
+)
+
+_TODAY = date(2026, 6, 1)
+
+MONTHLY = (
+    "<table class='pt'><tr><th>Date</th><th>Fajr</th><th>Dhuhr</th><th>Asr</th>"
+    "<th>Maghrib</th><th>Isha</th></tr>"
+    "<tr><td>1 June</td><td>05:00</td><td>13:30</td><td>18:30</td><td>21:30</td><td>23:00</td></tr>"
+    "</table>"
+)
+PDFP = '<html><body><a href="/june-2026-prayer-timetable.pdf">June Timetable</a></body></html>'
+UC = "<html><body><h1>Site under construction — coming soon.</h1></body></html>"
+
+
+def _ev(html):
+    return [build_page_evidence(html, "https://m.example/p", today=_TODAY)]
+
+
+def test_table_repair_prompt_numbers_rows_and_columns():
+    p = build_table_repair_prompt(_ev(MONTHLY))
+    assert "table_mapping" in p
+    assert "r0:" in p and "c0" in p          # numbered matrix
+    assert "orientation" in p
+    # vocab + kinds advertised
+    for name in ("fajr", "dhuhr", "asr", "maghrib", "isha"):
+        assert name in p
+
+
+def test_table_repair_prompt_includes_failed_reasons():
+    p = build_table_repair_prompt(
+        _ev(MONTHLY), [("enumerator:table_horizontal_multiday", "no occurrences produced")]
+    )
+    assert "already tried" in p
+    assert "no occurrences produced" in p
+
+
+def test_table_choice_prompt_asks_to_pick_a_table():
+    p = build_table_choice_prompt(_ev(MONTHLY))
+    assert "table_id" in p
+
+
+def test_media_prompt_lists_links_and_omits_full_schema():
+    p = build_media_prompt(_ev(PDFP))
+    assert "june-2026-prayer-timetable.pdf" in p
+    assert '"outcome": "media"' in p
+    # the media prompt must NOT dump the whole grid schema at the model
+    assert "table_selector" not in p
+    assert "prayer_label_index" not in p
+
+
+def test_terminal_prompt_allows_no_timetable():
+    p = build_terminal_classification_prompt(_ev(UC))
+    assert "no_timetable" in p
+    assert "wrong_site" in p
+    assert "under construction" in p.lower()
+
+
+def test_unknown_prompt_falls_back_to_full_schema():
+    p = build_unknown_prompt(_ev(MONTHLY))
+    assert "html_table" in p and "html_repeated" in p
+
+
+def test_widget_prompt_asks_for_provider():
+    iframe = '<html><body><iframe src="https://mawaqit.net/en/x"></iframe></body></html>'
+    p = build_widget_prompt(_ev(iframe))
+    assert "platform" in p
+    assert "mawaqit" in p

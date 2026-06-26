@@ -9,10 +9,10 @@ from directory.domain import DAILY_PRAYERS
 from directory.ingest.extractors.dom_grid import dom_matrix
 from directory.ingest.extractors.platforms.base import PlatformMatch
 from directory.ingest.extractors.platforms.generic_table import (
-    _horizontal_multiday,
-    _horizontal_single_day,
-    _transpose_multiday,
-    _vertical_single_day,
+    horizontal_multiday,
+    horizontal_single_day,
+    transpose_multiday,
+    vertical_single_day,
 )
 from directory.ingest.extractors.tablegrid import combined_header, content_header_depth
 from directory.ingest.normalize import resolve_prayer
@@ -51,10 +51,10 @@ class DomGridDetector:
             return None  # a per-day record card, not a grid → leave to dom_records
         # selector=None: the engine re-derives the matrix via dom_matrix each run.
         config = (
-            _horizontal_multiday(None, header, body)
-            or _transpose_multiday(None, matrix)
-            or _horizontal_single_day(None, header, body)
-            or _vertical_single_day(None, header, body)
+            horizontal_multiday(None, header, body)
+            or transpose_multiday(None, matrix)
+            or horizontal_single_day(None, header, body)
+            or vertical_single_day(None, header, body)
         )
         if config is None:
             return None

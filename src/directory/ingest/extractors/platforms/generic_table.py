@@ -12,6 +12,13 @@ from directory.ingest.extractors.config_schema import (
     SourceConfig,
 )
 from directory.ingest.extractors.platforms.base import PlatformMatch
+from directory.ingest.extractors.table_orientations import (
+    HORIZONTAL_MULTIDAY,
+    HORIZONTAL_SINGLE_DAY,
+    PRAYER_ROWS,
+    TRANSPOSE_MULTIDAY,
+    grid_for,
+)
 from directory.ingest.extractors.tablegrid import (
     caption_month,
     combined_header,
@@ -109,10 +116,10 @@ class GenericTableDetector:
             # single-day snapshot; a recognised orientation beats none.
             selector = _table_selector(table)
             config = (
-                _horizontal_multiday(selector, header, body)
-                or _transpose_multiday(selector, grid)
-                or _horizontal_single_day(selector, header, body)
-                or _vertical_single_day(selector, header, body)
+                horizontal_multiday(selector, header, body)
+                or transpose_multiday(selector, grid)
+                or horizontal_single_day(selector, header, body)
+                or vertical_single_day(selector, header, body)
             )
             if config is not None:
                 return PlatformMatch(
@@ -121,7 +128,7 @@ class GenericTableDetector:
         return None
 
 
-def _horizontal_multiday(selector, header, body) -> SourceConfig | None:
+def horizontal_multiday(selector, header, body) -> SourceConfig | None:
     """The classic layout: prayers across the header, one date per body row."""
     columns = detect_columns(header, body)
     if len(columns) < _MIN_PRAYER_COLS:
@@ -131,16 +138,13 @@ def _horizontal_multiday(selector, header, body) -> SourceConfig | None:
         return None
     return SourceConfig(
         shape="html_table",
-        grid=GridSpec(
-            table_selector=selector,
-            transpose=False,
-            date=DateSpec(index=date_idx),
-            columns=columns,
+        grid=grid_for(
+            HORIZONTAL_MULTIDAY, selector=selector, date_index=date_idx, columns=columns
         ),
     )
 
 
-def _transpose_multiday(selector, grid) -> SourceConfig | None:
+def transpose_multiday(selector, grid) -> SourceConfig | None:
     """Prayers down the side, dates across the top: flip the grid and reuse the
     column/date detectors. The engine applies the same flip via transpose=True."""
     if len(grid) < 2:
@@ -157,16 +161,13 @@ def _transpose_multiday(selector, grid) -> SourceConfig | None:
         return None
     return SourceConfig(
         shape="html_table",
-        grid=GridSpec(
-            table_selector=selector,
-            transpose=True,
-            date=DateSpec(index=date_idx),
-            columns=columns,
+        grid=grid_for(
+            TRANSPOSE_MULTIDAY, selector=selector, date_index=date_idx, columns=columns
         ),
     )
 
 
-def _horizontal_single_day(selector, header, body) -> SourceConfig | None:
+def horizontal_single_day(selector, header, body) -> SourceConfig | None:
     """Prayers across the header but no date axis — a single 'today' row."""
     columns = detect_columns(header, body)
     if len(columns) < _MIN_PRAYER_COLS:
@@ -181,15 +182,11 @@ def _horizontal_single_day(selector, header, body) -> SourceConfig | None:
         return None  # >1 timed row with no date is ambiguous → leave to the AI tier
     return SourceConfig(
         shape="html_table",
-        grid=GridSpec(
-            table_selector=selector,
-            single_day=True,
-            columns=columns,
-        ),
+        grid=grid_for(HORIZONTAL_SINGLE_DAY, selector=selector, columns=columns),
     )
 
 
-def _vertical_single_day(selector, header, body) -> SourceConfig | None:
+def vertical_single_day(selector, header, body) -> SourceConfig | None:
     """Prayers down a label column, kinds across the header, no date axis."""
     found = detect_vertical(header, body)
     if found is None:
@@ -197,10 +194,7 @@ def _vertical_single_day(selector, header, body) -> SourceConfig | None:
     label_idx, columns = found
     return SourceConfig(
         shape="html_table",
-        grid=GridSpec(
-            table_selector=selector,
-            prayer_label_index=label_idx,
-            single_day=True,
-            columns=columns,
+        grid=grid_for(
+            PRAYER_ROWS, selector=selector, label_index=label_idx, columns=columns
         ),
     )

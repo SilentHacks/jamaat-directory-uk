@@ -1,0 +1,15 @@
+{
+  "mosque_id": "case-under-construction",
+  "base_url": "https://ex.example/",
+  "pages": [
+    {
+      "url": "https://ex.example/",
+      "html_fixture": "under_construction.html"
+    }
+  ],
+  "expected": {
+    "triage_status": "no_timetable",
+    "last_status": "under_construction",
+    "model_used": false
+  }
+}

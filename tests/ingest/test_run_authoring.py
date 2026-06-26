@@ -198,6 +198,32 @@ def test_budget_caps_chargeable_calls_under_concurrency(engine, tmp_path):
         assert len(repo.candidate_sources(s)) >= 15
 
 
+def test_budget_not_consumed_by_free_deterministic_recovery(engine, tmp_path):
+    # A bundle the enumerator can map is authored for £0. A free deterministic win
+    # makes no chargeable call, so it must NOT burn a budget slot — otherwise a
+    # small --max-calls cap silently strands the rest of the corpus. (Regression:
+    # the cap counts model spend, not the outcome bucket.)
+    from directory.ingest.evidence import build_page_evidence
+
+    for mid in ("m1", "m2", "m3"):
+        _candidate(engine, mid, "London", tmp_path)
+        url = f"https://{mid}.example/prayer-times"
+        ev = build_page_evidence(TABLE_HTML, url, today=date(2026, 6, 1))
+        CandidateBundle(mid, f"https://{mid}.example/",
+                        [Candidate(url, 9.0, TABLE_HTML, "Fajr")], evidence=[ev]).save(tmp_path)
+    harness = FakeHarness(_good_output("https://m1.example/prayer-times"))
+
+    # concurrency=1 so the reserve→refund cycle is sequential (a refunded slot is
+    # observable by the next worker, not lost to a concurrent reserve race).
+    outs = run_authoring(engine, harness=harness, candidate_root=tmp_path, models=("cheap",),
+                         max_calls=1, concurrency=1, today=date(2026, 6, 1), horizon_days=5,
+                         fetcher=_fetcher)
+
+    assert len(outs) == 3  # all recovered despite max_calls=1 — budget never spent
+    assert all(o.outcome == "authored" and o.model is None for o in outs)
+    assert harness.calls == []  # the model was never paid
+
+
 def test_run_authoring_escalates_to_fallback(engine, tmp_path):
     _candidate(engine, "m1", "London", tmp_path)
     fallback = FakeBrowsingHarness(_good_output("https://m1.example/prayer-times"))
