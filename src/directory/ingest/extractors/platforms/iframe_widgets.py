@@ -50,19 +50,9 @@ class IframeWidgetDetector:
         )
 
 
-MYLOCALMASJID = IframeWidgetDetector(
-    name="mylocalmasjid",
-    domain="my-masjid.com",
-    row_selector="div.prayer-day",
-    date_selector=".d",
-    columns=[
-        (".p-fajr", Prayer.FAJR),
-        (".p-dhuhr", Prayer.DHUHR),
-        (".p-asr", Prayer.ASR),
-        (".p-maghrib", Prayer.MAGHRIB),
-        (".p-isha", Prayer.ISHA),
-    ],
-)
+# NOTE: my-masjid.com (MyLocalMasjid) is handled by the verified JSON-API extractor
+# in ``my_masjid.py`` — its timetable lives in an API, not a scrapeable iframe DOM —
+# so it is intentionally NOT an IframeWidgetDetector here.
 
 MASJIDBOX = IframeWidgetDetector(
     name="masjidbox",
@@ -78,5 +68,4 @@ MASJIDBOX = IframeWidgetDetector(
     ],
 )
 
-register(MYLOCALMASJID)
 register(MASJIDBOX)

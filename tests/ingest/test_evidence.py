@@ -121,6 +121,25 @@ def test_masjidbox_marker_without_iframe_is_low_confidence_hint():
     assert any(w.provider == "masjidbox" for w in ev.widget_hints)
 
 
+def test_anchor_button_to_my_masjid_screen_becomes_widget_hint_with_api():
+    # A mosque page that links to its my-masjid timing screen with a button (no
+    # iframe): A2 must follow the anchor, and the hint's data_url must be the JSON
+    # API (not the Angular shell URL) so the enumerator can verify it for £0.
+    guid = "f4c8cc40-8e42-47ce-9e74-d8125a10b0ba"
+    html = (
+        f'<html><body><h1>Welcome</h1>'
+        f'<a href="https://time.my-masjid.com/timingscreen/{guid}">Prayer Times</a>'
+        f'</body></html>'
+    )
+    ev = build_page_evidence(html, "https://alhuda.example/", today=TODAY)
+    hint = next(w for w in ev.widget_hints if w.provider == "mylocalmasjid")
+    assert hint.data_url == (
+        "https://time.my-masjid.com/api/TimingsInfoScreen/GetMasjidTimings"
+        f"?GuidId={guid}"
+    )
+    assert ev.page_class == "iframe_or_widget"  # not terminal, not empty
+
+
 # ── JS shell ──────────────────────────────────────────────────────────────────
 
 

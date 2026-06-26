@@ -403,11 +403,41 @@ def _iframes(soup: BeautifulSoup, base_url: str) -> list[IframeEvidence]:
     return out
 
 
-def _widget_hints(iframes: list[IframeEvidence], html: str) -> list[WidgetHint]:
-    """Recognised embedded prayer-widget providers. An iframe whose src names the
-    provider is high confidence; a bare provider marker elsewhere in the HTML (a
-    script embed without an <iframe>) is lower confidence. One hint per provider,
-    keeping the strongest."""
+def _provider_anchors(soup: BeautifulSoup, base_url: str) -> list[tuple[str, str]]:
+    """``(provider, absolute_url)`` for anchor hrefs that point at a known widget
+    provider host — a "Prayer Times" button linking off-site to the widget (e.g. a
+    my-masjid timing screen) rather than embedding it in an <iframe>. Without this
+    the timetable host is never reached: the page itself carries only chrome."""
+    out: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for a in soup.find_all("a", href=True):
+        absolute = urljoin(base_url, a["href"])
+        provider = _provider_hint(absolute)
+        if provider and absolute not in seen:
+            seen.add(absolute)
+            out.append((provider, absolute))
+    return out
+
+
+def _resolve_data_url(provider: str, ref: str | None, fallback: str | None) -> str | None:
+    """The fetchable data URL for a provider reference. Most providers serve their
+    timetable from the referenced URL itself; my-masjid serves JSON from a separate
+    API keyed by the screen GUID, so resolve that here so the widget config points at
+    the data, not the Angular shell."""
+    if provider == "mylocalmasjid":
+        from directory.ingest.extractors.platforms.my_masjid import my_masjid_data_url
+
+        return my_masjid_data_url(ref or "") or fallback
+    return fallback
+
+
+def _widget_hints(
+    iframes: list[IframeEvidence], anchors: list[tuple[str, str]], html: str
+) -> list[WidgetHint]:
+    """Recognised embedded prayer-widget providers, from an iframe src, an off-site
+    anchor button, or a bare provider marker in the HTML. iframe ≻ anchor ≻ bare
+    marker by confidence. One hint per provider (strongest kept), its ``data_url``
+    resolved to the fetchable timetable source so the enumerator can verify it."""
     best: dict[str, WidgetHint] = {}
 
     def _offer(provider: str, data_url: str | None, confidence: float) -> None:
@@ -417,11 +447,14 @@ def _widget_hints(iframes: list[IframeEvidence], html: str) -> list[WidgetHint]:
 
     for iframe in iframes:
         if iframe.provider_hint:
-            _offer(iframe.provider_hint, iframe.url, 0.9)
+            data_url = _resolve_data_url(iframe.provider_hint, iframe.url, iframe.url)
+            _offer(iframe.provider_hint, data_url, 0.9)
+    for provider, url in anchors:
+        _offer(provider, _resolve_data_url(provider, url, url), 0.8)
     low = html.lower()
     for provider, markers in _PROVIDER_MARKERS.items():
         if any(marker in low for marker in markers):
-            _offer(provider, None, 0.5)
+            _offer(provider, _resolve_data_url(provider, html, None), 0.5)
     return list(best.values())
 
 
@@ -585,7 +618,7 @@ def build_page_evidence(
     ]
     media = _media_links(soup, url)
     iframes = _iframes(soup, url)
-    widgets = _widget_hints(iframes, html)
+    widgets = _widget_hints(iframes, _provider_anchors(soup, url), html)
     nav = _nav_hints(text_soup)
     js = _js_hints(soup, html)
 

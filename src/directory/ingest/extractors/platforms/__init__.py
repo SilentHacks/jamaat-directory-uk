@@ -2,6 +2,7 @@
 from directory.ingest.extractors.platforms import (  # noqa: F401
     iframe_widgets,
     mawaqit,
+    my_masjid,
     wp_prayer,
 )
 from directory.ingest.extractors.platforms.base import register
