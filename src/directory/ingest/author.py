@@ -55,10 +55,47 @@ ProgressFn = Callable[[int, int, object], None]
 @dataclass
 class AuthorOutcome:
     mosque_id: str
-    # authored|review|deferred_media|no_timetable|needs_reauthor|no_candidate|skipped|failed
+    # authored|review|deferred_media|no_timetable|needs_reauthor|no_candidate|skipped
+    # |no_model|failed
     outcome: str
     model: str | None = None
     detail: str | None = None
+    # Terminal sub-status ("no_timetable"|"wrong_site") so reporting can split a
+    # misrouted site from a genuine "publishes no timetable" (both share the
+    # ``no_timetable`` outcome). None for non-terminal outcomes.
+    last_status: str | None = None
+    # Chargeable harness calls made for this mosque, split by stage so an operator
+    # can see model spend vs deterministic wins. The deterministic recovery path
+    # makes zero of both.
+    model_calls: int = 0
+    fallback_calls: int = 0
+
+
+def categorize_outcome(o: AuthorOutcome) -> str:
+    """The reporting bucket for an outcome: splits ``authored`` into deterministic vs
+    model (by whether a model authored it) and ``no_timetable`` into wrong_site vs
+    no_timetable (by terminal sub-status). Everything else maps to its raw outcome
+    (``review``/``deferred_media``/``needs_reauthor``/``skipped``/``no_candidate``/
+    ``no_model``)."""
+    if o.outcome == "authored":
+        return "deterministic_authored" if o.model is None else "model_authored"
+    if o.outcome == "no_timetable":
+        return "wrong_site" if o.last_status == "wrong_site" else "no_timetable"
+    return o.outcome
+
+
+def summarize_outcomes(outcomes: list[AuthorOutcome]) -> Counter[str]:
+    """Tally a batch of outcomes into operator-facing counters (bucket counts plus
+    aggregate ``model_calls``/``fallback_calls``), so a batch run is diagnosable at a
+    glance — deterministic wins vs model spend."""
+    tally: Counter[str] = Counter()
+    for o in outcomes:
+        tally[categorize_outcome(o)] += 1
+        if o.model_calls:
+            tally["model_calls"] += o.model_calls
+        if o.fallback_calls:
+            tally["fallback_calls"] += o.fallback_calls
+    return tally
 
 
 @dataclass
@@ -293,7 +330,13 @@ def _attempt(
     # Terminal classification: nothing a stronger model can author — record and stop.
     if decision.outcome in _TERMINAL_OUTCOMES:
         _persist_terminal(ctx, mosque_id, decision, f"{harness_name}:{model}")
-        return AuthorOutcome(mosque_id, "no_timetable", model, detail=decision.reason), None
+        return (
+            AuthorOutcome(
+                mosque_id, "no_timetable", model, detail=decision.reason,
+                last_status=_TERMINAL_LAST_STATUS[decision.outcome],
+            ),
+            None,
+        )
 
     # The model could not decide → let the next stage try.
     if decision.outcome == "unknown":
@@ -395,6 +438,101 @@ def _deterministic_recover(ctx: _Ctx, bundle: CandidateBundle):
     )
 
 
+# ── candidate diagnosis (Phase 8) ─────────────────────────────────────────────
+
+
+@dataclass
+class PageDiagnosis:
+    url: str
+    page_class: str
+    n_tables: int
+    n_media: int
+    n_widgets: int
+    n_iframes: int
+    js_hints: list[str]
+    terminal_hints: list[str]
+
+
+@dataclass
+class CandidateDiagnosis:
+    source: str
+    reason: str
+    ok: bool
+    triage_status: str
+    rows_count: int
+    reasons: list[str]
+
+
+@dataclass
+class DiagnoseReport:
+    """A dry-run picture of what authoring *would* do for one candidate source: the
+    page classes, the deterministic config candidates and their in-memory verify
+    results, whether the deterministic pass recovers a config, and — if not — the
+    narrow prompt kind a model would receive. No DB writes, no model calls."""
+
+    mosque_id: str
+    found_bundle: bool
+    pages: list[PageDiagnosis]
+    candidates: list[CandidateDiagnosis]
+    deterministic_recovered: bool
+    prompt_kind: str
+
+
+def diagnose_candidate(
+    engine,
+    mosque_id: str,
+    *,
+    candidate_root: Path,
+    today: date | None = None,
+    horizon_days: int = 60,
+    fetcher=fetch,
+    renderer=None,
+    nav_renderer=None,
+) -> DiagnoseReport:
+    """Inspect a candidate source without authoring it. Loads the bundle, summarizes
+    each page's evidence, enumerates deterministic config candidates and verifies each
+    in memory, and reports the prompt kind a model would get if the deterministic pass
+    cannot recover. Pure diagnosis — nothing is persisted and no model is called."""
+    bundle = CandidateBundle.load(mosque_id, candidate_root)
+    if bundle is None or not bundle.candidates:
+        return DiagnoseReport(mosque_id, False, [], [], False, "none")
+
+    evidence = bundle.evidence
+    pages = [
+        PageDiagnosis(
+            url=p.url, page_class=p.page_class, n_tables=len(p.tables),
+            n_media=len(p.media_links), n_widgets=len(p.widget_hints),
+            n_iframes=len(p.iframes), js_hints=list(p.js_hints),
+            terminal_hints=list(p.terminal_hints),
+        )
+        for p in evidence
+    ]
+
+    candidates: list[CandidateDiagnosis] = []
+    recovered = False
+    for cand in enumerate_candidates(evidence):
+        attempt = verify_candidate(
+            cand, today=today, horizon_days=horizon_days, fetcher=fetcher,
+            renderer=renderer, nav_renderer=nav_renderer,
+        )
+        candidates.append(
+            CandidateDiagnosis(
+                source=cand.source, reason=cand.reason, ok=attempt.ok,
+                triage_status=attempt.triage_status, rows_count=attempt.rows_count,
+                reasons=attempt.reasons,
+            )
+        )
+        recovered = recovered or attempt.ok
+
+    if recovered:
+        prompt_kind = "none"
+    elif evidence:
+        prompt_kind = route_prompt_kind(evidence)
+    else:
+        prompt_kind = "legacy"
+    return DiagnoseReport(mosque_id, True, pages, candidates, recovered, prompt_kind)
+
+
 # ── attempt history (Phase 6) ─────────────────────────────────────────────────
 
 
@@ -447,6 +585,7 @@ def author_mosque(
     allowed_statuses: frozenset[str] = frozenset({"candidate"}),
     feedback_retries: int = 1,
     runs_root: Path | None = None,
+    no_model: bool = False,
 ) -> AuthorOutcome:
     with session_scope(engine) as s:
         src = repo.get_source(s, mosque_id)
@@ -473,6 +612,15 @@ def author_mosque(
         return AuthorOutcome(mosque_id, out.triage_status, model=None,
                              detail=recovered.candidate.reason)
 
+    # Deterministic-only pass (--no-model): evidence + enumerator already ran above
+    # and could not recover. Leave the source a `candidate` untouched (no model call,
+    # no needs_reauthor) so a later paid run can still pick it up — this is the lane
+    # for measuring deterministic recovery before paying for any model.
+    if no_model:
+        return AuthorOutcome(
+            mosque_id, "no_model", detail="no deterministic config (model disabled)"
+        )
+
     stages = [_Stage(harness, models, allow_bespoke=False, feedback=True, browse=False)]
     if fallback is not None:
         stages.append(
@@ -482,6 +630,13 @@ def author_mosque(
     initial_kind = route_prompt_kind(evidence) if evidence else "legacy"
     history: list[dict] = []
     detail: str | None = None
+    model_calls = 0
+    fallback_calls = 0
+
+    def _stamp(out: AuthorOutcome) -> AuthorOutcome:
+        out.model_calls = model_calls
+        out.fallback_calls = fallback_calls
+        return out
 
     for stage in stages:
         for model in stage.models:
@@ -506,6 +661,10 @@ def author_mosque(
                         else build_feedback_prompt(base, prev_reply, detail or "")
                     )
                 res = stage.harness.run(prompt, model=model)
+                if stage.browse:
+                    fallback_calls += 1
+                else:
+                    model_calls += 1
                 if is_shutting_down():
                     raise KeyboardInterrupt
                 outcome, detail = _attempt(
@@ -515,7 +674,7 @@ def author_mosque(
                 _record(history, model=model, kind=kind, res=res, detail=detail, outcome=outcome)
                 if outcome is not None:
                     _flush_history(runs_root, mosque_id, history)
-                    return outcome
+                    return _stamp(outcome)
                 # A subprocess failure (timeout/crash) won't be fixed by feedback.
                 if not res.ok:
                     break
@@ -529,7 +688,7 @@ def author_mosque(
         repo.set_source_state(
             s, mosque_id, triage_status="needs_reauthor", last_status="error", last_error=detail
         )
-    return AuthorOutcome(mosque_id, "needs_reauthor", detail=detail)
+    return _stamp(AuthorOutcome(mosque_id, "needs_reauthor", detail=detail))
 
 
 def run_verify_retry(
@@ -597,7 +756,7 @@ class Budget:
             return self._spent
 
 
-_FREE_OUTCOMES = {"no_candidate", "skipped"}
+_FREE_OUTCOMES = {"no_candidate", "skipped", "no_model"}
 
 
 def _drain_pool[T](
@@ -667,6 +826,7 @@ def run_authoring(
     nav_renderer=None,
     feedback_retries: int = 1,
     runs_root: Path | None = None,
+    no_model: bool = False,
     on_outcome: ProgressFn | None = None,
 ) -> list[AuthorOutcome]:
     with session_scope(engine) as s:
@@ -691,6 +851,7 @@ def run_authoring(
                 fallback=fallback, fallback_model=fallback_model, bespoke_root=bespoke_root,
                 today=today, horizon_days=horizon_days, fetcher=fetcher, renderer=renderer,
                 nav_renderer=nav_renderer, feedback_retries=feedback_retries, runs_root=runs_root,
+                no_model=no_model,
             )
         except KeyboardInterrupt:
             if snap is not None:

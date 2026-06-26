@@ -124,6 +124,86 @@ def test_author_opencode_harness_uses_legacy_ladder(monkeypatch, tmp_path):
     assert len(captured["models"]) == 2  # cheap → strong ladder
 
 
+def test_author_no_model_runs_deterministic_only(monkeypatch, tmp_path):
+    import directory.cli as cli
+
+    captured = {}
+    monkeypatch.setenv("DIRECTORY_DB_PATH", str(tmp_path / "t.db"))
+    monkeypatch.setattr(cli, "run_authoring", lambda engine, **kw: captured.update(kw) or [])
+
+    runner.invoke(cli.app, ["init-db"])
+    result = runner.invoke(cli.app, ["author", "--no-model", "--agentic"])
+    assert result.exit_code == 0
+    assert captured["no_model"] is True
+    assert captured["fallback"] is None  # no stage is reached, so no fallback is wired
+
+
+def test_author_summary_splits_deterministic_and_model(monkeypatch, tmp_path):
+    import directory.cli as cli
+
+    def fake_run(engine, **kwargs):
+        return [
+            AuthorOutcome("a", "authored", model=None),
+            AuthorOutcome("b", "authored", model="opus@low", model_calls=1),
+            AuthorOutcome("c", "no_timetable", last_status="wrong_site", model_calls=1),
+        ]
+
+    monkeypatch.setenv("DIRECTORY_DB_PATH", str(tmp_path / "t.db"))
+    monkeypatch.setattr(cli, "run_authoring", fake_run)
+
+    runner.invoke(cli.app, ["init-db"])
+    result = runner.invoke(cli.app, ["author"])
+    assert result.exit_code == 0
+    assert "deterministic_authored=1" in result.stdout
+    assert "model_authored=1" in result.stdout
+    assert "wrong_site=1" in result.stdout
+    assert "model_calls=2" in result.stdout
+
+
+def test_inspect_candidate_prints_diagnosis(monkeypatch, tmp_path):
+    import directory.cli as cli
+    from directory.ingest.author import (
+        CandidateDiagnosis,
+        DiagnoseReport,
+        PageDiagnosis,
+    )
+
+    report = DiagnoseReport(
+        mosque_id="m1", found_bundle=True,
+        pages=[PageDiagnosis("https://m1.example/", "iframe_or_widget", 0, 0, 1, 1, [], [])],
+        candidates=[CandidateDiagnosis("enumerator:widget_mawaqit", "mawaqit widget",
+                                       False, "needs_reauthor", 0, ["empty body"])],
+        deterministic_recovered=False, prompt_kind="widget",
+    )
+    monkeypatch.setenv("DIRECTORY_DB_PATH", str(tmp_path / "t.db"))
+    monkeypatch.setattr(cli, "load_bespoke", lambda root: [])
+    monkeypatch.setattr(cli, "diagnose_candidate", lambda engine, mid, **kw: report)
+
+    runner.invoke(cli.app, ["init-db"])
+    result = runner.invoke(cli.app, ["inspect-candidate", "--mosque-id", "m1"])
+    assert result.exit_code == 0
+    assert "[iframe_or_widget]" in result.stdout
+    assert "enumerator:widget_mawaqit" in result.stdout
+    assert "prompt kind would be 'widget'" in result.stdout
+
+
+def test_inspect_candidate_missing_bundle_exits_nonzero(monkeypatch, tmp_path):
+    import directory.cli as cli
+    from directory.ingest.author import DiagnoseReport
+
+    monkeypatch.setenv("DIRECTORY_DB_PATH", str(tmp_path / "t.db"))
+    monkeypatch.setattr(cli, "load_bespoke", lambda root: [])
+    monkeypatch.setattr(
+        cli, "diagnose_candidate",
+        lambda engine, mid, **kw: DiagnoseReport(mid, False, [], [], False, "none"),
+    )
+
+    runner.invoke(cli.app, ["init-db"])
+    result = runner.invoke(cli.app, ["inspect-candidate", "--mosque-id", "ghost"])
+    assert result.exit_code == 1
+    assert "no candidate bundle" in result.stdout
+
+
 def test_reauthor_no_verify_only_invokes_model_path(monkeypatch, tmp_path):
     import directory.cli as cli
 
