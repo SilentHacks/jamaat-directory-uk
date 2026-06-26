@@ -12,16 +12,24 @@ from directory import repository as repo
 from directory.db import session_scope
 from directory.ingest.authoring_candidates import ConfigCandidate
 from directory.ingest.config_enumerator import best_verified_candidate, enumerate_candidates
-from directory.ingest.discover import CandidateBundle
-from directory.ingest.evidence import MEDIA_TIMETABLE_SCORE, PageEvidence
-from directory.ingest.extractors.bespoke import load_bespoke, save_module
-from directory.ingest.extractors.config_schema import (
-    ColumnSpec,
-    DateSpec,
-    GridSpec,
-    MediaSpec,
-    SourceConfig,
+from directory.ingest.decision import (
+    TERMINAL_LAST_STATUS,
+    TERMINAL_OUTCOMES,
+    AuthorDecision,
+    config_from_table_mapping,
+    extract_json,
+    parse_decision,
 )
+from directory.ingest.diagnosis import (
+    CandidateDiagnosis,
+    DiagnoseReport,
+    PageDiagnosis,
+    diagnose_candidate,
+)
+from directory.ingest.discover import CandidateBundle
+from directory.ingest.evidence import PageEvidence
+from directory.ingest.extractors.bespoke import load_bespoke, save_module
+from directory.ingest.extractors.config_schema import SourceConfig
 from directory.ingest.failure import classify_failure, feedback_prompt_kind
 from directory.ingest.fetch import fetch
 from directory.ingest.harness import (
@@ -30,21 +38,40 @@ from directory.ingest.harness import (
     request_shutdown,
     reset_shutdown,
 )
-from directory.ingest.jsonscan import first_json_object
 from directory.ingest.prompt import (
-    build_author_prompt,
     build_browse_prompt,
     build_feedback_prompt,
-    build_media_prompt,
-    build_table_choice_prompt,
-    build_table_repair_prompt,
-    build_terminal_classification_prompt,
-    build_unknown_prompt,
-    build_widget_prompt,
+    build_prompt,
+    route_prompt_kind,
 )
-from directory.ingest.runner import _MEDIA_SHAPES, ExtractOutcome, extract_source
+from directory.ingest.runner import MEDIA_SHAPES, ExtractOutcome, extract_source
 from directory.ingest.verify import persist_verified_candidate, verify_candidate
 from directory.models import Mosque
+
+# Re-exported for the CLI and tests that import these from author (their historical
+# home); the parsing/building lives in decision.py and the dry-run inspection in
+# diagnosis.py now, but the author module stays their public entry point.
+__all__ = [
+    "AuthorDecision",
+    "AuthorOutcome",
+    "Budget",
+    "CandidateDiagnosis",
+    "DiagnoseReport",
+    "PageDiagnosis",
+    "author_mosque",
+    "categorize_outcome",
+    "config_from_table_mapping",
+    "diagnose_candidate",
+    "extract_json",
+    "order_by_city_size",
+    "parse_decision",
+    "route_prompt_kind",
+    "run_authoring",
+    "run_reauthor",
+    "run_verify_retry",
+    "summarize_outcomes",
+    "tally_outcome",
+]
 
 # Progress callback for the long-running funnels: (completed_count, total,
 # result). ``result`` is None when a worker did no chargeable work (e.g. the
@@ -84,17 +111,30 @@ def categorize_outcome(o: AuthorOutcome) -> str:
     return o.outcome
 
 
+# Aggregate-spend keys folded into the same Counter as the status buckets; callers
+# that need the mosque count exclude these (they count calls, not mosques).
+SPEND_KEYS = ("model_calls", "fallback_calls")
+
+
+def tally_outcome(tally: Counter[str], o: AuthorOutcome) -> None:
+    """Fold one outcome into operator-facing counters: its reporting bucket plus
+    aggregate ``model_calls``/``fallback_calls`` spend. The single bucketing rule,
+    shared by the live progress reporter and the end-of-run summary so the two can
+    never diverge."""
+    tally[categorize_outcome(o)] += 1
+    if o.model_calls:
+        tally["model_calls"] += o.model_calls
+    if o.fallback_calls:
+        tally["fallback_calls"] += o.fallback_calls
+
+
 def summarize_outcomes(outcomes: list[AuthorOutcome]) -> Counter[str]:
     """Tally a batch of outcomes into operator-facing counters (bucket counts plus
     aggregate ``model_calls``/``fallback_calls``), so a batch run is diagnosable at a
     glance — deterministic wins vs model spend."""
     tally: Counter[str] = Counter()
     for o in outcomes:
-        tally[categorize_outcome(o)] += 1
-        if o.model_calls:
-            tally["model_calls"] += o.model_calls
-        if o.fallback_calls:
-            tally["fallback_calls"] += o.fallback_calls
+        tally_outcome(tally, o)
     return tally
 
 
@@ -124,156 +164,6 @@ class _Ctx:
     nav_renderer: object
 
 
-def extract_json(text: str) -> str | None:
-    """Return the first balanced top-level JSON object in ``text``, or None."""
-    return first_json_object(text)
-
-
-# Model outcomes that terminate authoring with no extractable timetable; both land
-# the source on triage_status="no_timetable" (the last_status detail distinguishes
-# them). See gates/discovery for the deterministic counterparts.
-_TERMINAL_OUTCOMES = frozenset({"no_timetable", "wrong_site"})
-# wrong_site keeps its own last_status so a misrouted website is distinguishable
-# from a genuine "this mosque publishes no timetable".
-_TERMINAL_LAST_STATUS = {"no_timetable": "no_timetable", "wrong_site": "wrong_site"}
-
-# Fields a model may set on a table_mapping column; anything else is dropped before
-# building the ColumnSpec (so a stray key cannot raise a schema error).
-_COLUMN_FIELDS = frozenset(
-    {"kind", "prayer", "index", "time_index", "selector", "header_seen", "value_kind",
-     "base_prayer"}
-)
-
-
-@dataclass
-class AuthorDecision:
-    """A parsed harness reply. ``outcome`` routes what happens next:
-    - ``config``: ``config`` (+ optional ``module_code``) is verified and persisted.
-    - ``table_mapping``: a compact table column mapping; local code builds the config.
-    - ``media``: ``config`` is an image/pdf media config to defer.
-    - ``no_timetable`` / ``wrong_site``: terminal — record and stop, no escalation.
-    - ``unknown``: the model could not decide; escalate to the next stage.
-    """
-
-    outcome: str
-    config: SourceConfig | None = None
-    url: str | None = None
-    module_code: str | None = None
-    reason: str | None = None
-    # table_mapping fields:
-    table_id: str | None = None
-    orientation: str | None = None
-    date_index: int | None = None
-    label_index: int | None = None
-    columns: list[dict] | None = None
-
-
-def parse_decision(raw: str, default_url: str) -> AuthorDecision:
-    """Parse a harness reply into an AuthorDecision.
-
-    Accepts the historical config envelopes — ``{"url":..., "config": {...},
-    "module_code": "..."}`` or a bare config object — and the narrow decision
-    envelopes ``{"outcome": "table_mapping"|"media"|"no_timetable"|"wrong_site"
-    |"unknown", ...}``. Raises ValueError (incl. pydantic ValidationError) on
-    anything invalid.
-    """
-    obj = extract_json(raw)
-    if obj is None:
-        raise ValueError("no JSON object in harness output")
-    data = json.loads(obj)
-    if not isinstance(data, dict):
-        raise ValueError("harness output is not a JSON object")
-
-    outcome = data.get("outcome")
-
-    if outcome in _TERMINAL_OUTCOMES:
-        return AuthorDecision(
-            outcome=outcome, reason=data.get("reason"), url=data.get("url") or default_url
-        )
-    if outcome == "unknown":
-        return AuthorDecision(
-            outcome="unknown", reason=data.get("reason"), url=data.get("url") or default_url
-        )
-    if outcome == "media":
-        kind = data.get("kind")
-        media_url = data.get("url")
-        if kind not in {"image", "pdf"} or not media_url:
-            raise ValueError("media decision requires kind 'image'|'pdf' and a url")
-        return AuthorDecision(
-            outcome="media",
-            config=SourceConfig(shape=kind, media=MediaSpec(url=media_url)),
-            url=data.get("page_url") or default_url,
-            reason=data.get("reason"),
-        )
-    if outcome == "table_mapping":
-        return AuthorDecision(
-            outcome="table_mapping",
-            url=data.get("url") or default_url,
-            table_id=data.get("table_id"),
-            orientation=data.get("orientation"),
-            date_index=data.get("date_index"),
-            label_index=data.get("label_index"),
-            columns=data.get("columns"),
-        )
-
-    # Config envelope or bare config (back-compat).
-    module_code: str | None = None
-    if "config" in data:
-        cfg_obj = data["config"]
-        url = data.get("url") or default_url
-        module_code = data.get("module_code")
-    else:
-        cfg_obj = data
-        url = default_url
-    return AuthorDecision(
-        outcome="config",
-        config=SourceConfig.model_validate(cfg_obj),
-        url=url,
-        module_code=module_code,
-    )
-
-
-def _selector_for_table(table_id: str | None, evidence: list[PageEvidence]) -> str | None:
-    for page in evidence:
-        for t in page.tables:
-            if t.table_id == table_id:
-                return t.selector
-    return None
-
-
-def config_from_table_mapping(
-    decision: AuthorDecision, evidence: list[PageEvidence]
-) -> SourceConfig:
-    """Build an ``html_table`` SourceConfig from a model's compact table_mapping,
-    resolving the table's CSS selector from the evidence by ``table_id``."""
-    columns = [
-        ColumnSpec(**{k: v for k, v in (c or {}).items() if k in _COLUMN_FIELDS})
-        for c in (decision.columns or [])
-    ]
-    if not columns:
-        raise ValueError("table_mapping has no columns")
-    selector = _selector_for_table(decision.table_id, evidence)
-    orientation = decision.orientation or "horizontal_multiday"
-    if orientation == "transpose_multiday":
-        grid = GridSpec(
-            table_selector=selector, transpose=True,
-            date=DateSpec(index=decision.date_index), columns=columns,
-        )
-    elif orientation == "horizontal_single_day":
-        grid = GridSpec(table_selector=selector, single_day=True, columns=columns)
-    elif orientation == "prayer_rows":
-        grid = GridSpec(
-            table_selector=selector, prayer_label_index=decision.label_index,
-            single_day=True, columns=columns,
-        )
-    else:  # horizontal_multiday
-        grid = GridSpec(
-            table_selector=selector, date=DateSpec(index=decision.date_index),
-            columns=columns,
-        )
-    return SourceConfig(shape="html_table", grid=grid)
-
-
 def _config_from_decision(
     decision: AuthorDecision, evidence: list[PageEvidence], ctx: _Ctx, allow_bespoke: bool
 ) -> SourceConfig:
@@ -299,7 +189,7 @@ def _persist_terminal(ctx: _Ctx, mosque_id: str, decision: AuthorDecision, autho
     with session_scope(ctx.engine, write=True) as s:
         repo.set_source_state(
             s, mosque_id, triage_status="no_timetable",
-            last_status=_TERMINAL_LAST_STATUS[decision.outcome],
+            last_status=TERMINAL_LAST_STATUS[decision.outcome],
             last_error=decision.reason or decision.outcome,
             authored_by=authored_by, authored_at=now,
         )
@@ -328,12 +218,12 @@ def _attempt(
         return None, f"invalid config: {exc}"
 
     # Terminal classification: nothing a stronger model can author — record and stop.
-    if decision.outcome in _TERMINAL_OUTCOMES:
+    if decision.outcome in TERMINAL_OUTCOMES:
         _persist_terminal(ctx, mosque_id, decision, f"{harness_name}:{model}")
         return (
             AuthorOutcome(
                 mosque_id, "no_timetable", model, detail=decision.reason,
-                last_status=_TERMINAL_LAST_STATUS[decision.outcome],
+                last_status=TERMINAL_LAST_STATUS[decision.outcome],
             ),
             None,
         )
@@ -364,7 +254,7 @@ def _attempt(
     # JS render retry: a correct static config yields 0 rows when the timetable is
     # JS-injected. Re-verify once with requires_js=True (no speculative DB write)
     # before flagging the source.
-    if config.shape not in _MEDIA_SHAPES and ctx.renderer is not None:
+    if config.shape not in MEDIA_SHAPES and ctx.renderer is not None:
         js_attempt = verify_candidate(
             replace(cand, requires_js=True), today=ctx.today, horizon_days=ctx.horizon_days,
             fetcher=ctx.fetcher, renderer=ctx.renderer, nav_renderer=ctx.nav_renderer,
@@ -376,47 +266,6 @@ def _attempt(
             return AuthorOutcome(mosque_id, out.triage_status, model), None
 
     return None, attempt.error or "; ".join(attempt.reasons) or "gates rejected the config"
-
-
-# ── prompt routing (Phase 5) ──────────────────────────────────────────────────
-
-
-def route_prompt_kind(evidence: list[PageEvidence]) -> str:
-    """The narrow prompt kind that fits the strongest evidence on the page set:
-    table → media → widget → terminal → unknown."""
-    if any(len(p.tables) > 1 for p in evidence):
-        return "table_choice"
-    if any(p.tables for p in evidence):
-        return "table_repair"
-    if any(m.score >= MEDIA_TIMETABLE_SCORE for p in evidence for m in p.media_links):
-        return "media"
-    if any(p.widget_hints for p in evidence):
-        return "widget"
-    if any(p.terminal_hints for p in evidence):
-        return "terminal"
-    return "unknown"
-
-
-def _build_prompt(
-    kind: str, bundle: CandidateBundle, evidence: list[PageEvidence],
-    failed: list[tuple[str, str]],
-) -> str:
-    """Build the prompt for ``kind``. With no structured evidence (an old bundle)
-    fall back to the legacy single-shot prompt, so pre-evidence bundles behave
-    exactly as before."""
-    if kind == "legacy" or not evidence:
-        return build_author_prompt(bundle)
-    if kind == "table_choice":
-        return build_table_choice_prompt(evidence, failed)
-    if kind == "table_repair":
-        return build_table_repair_prompt(evidence, failed)
-    if kind == "media":
-        return build_media_prompt(evidence)
-    if kind == "widget":
-        return build_widget_prompt(evidence)
-    if kind == "terminal":
-        return build_terminal_classification_prompt(evidence)
-    return build_unknown_prompt(evidence)
 
 
 # ── deterministic pre-model recovery (Phase 3) ────────────────────────────────
@@ -436,101 +285,6 @@ def _deterministic_recover(ctx: _Ctx, bundle: CandidateBundle):
         candidates, today=ctx.today, horizon_days=ctx.horizon_days, fetcher=ctx.fetcher,
         renderer=ctx.renderer, nav_renderer=ctx.nav_renderer,
     )
-
-
-# ── candidate diagnosis (Phase 8) ─────────────────────────────────────────────
-
-
-@dataclass
-class PageDiagnosis:
-    url: str
-    page_class: str
-    n_tables: int
-    n_media: int
-    n_widgets: int
-    n_iframes: int
-    js_hints: list[str]
-    terminal_hints: list[str]
-
-
-@dataclass
-class CandidateDiagnosis:
-    source: str
-    reason: str
-    ok: bool
-    triage_status: str
-    rows_count: int
-    reasons: list[str]
-
-
-@dataclass
-class DiagnoseReport:
-    """A dry-run picture of what authoring *would* do for one candidate source: the
-    page classes, the deterministic config candidates and their in-memory verify
-    results, whether the deterministic pass recovers a config, and — if not — the
-    narrow prompt kind a model would receive. No DB writes, no model calls."""
-
-    mosque_id: str
-    found_bundle: bool
-    pages: list[PageDiagnosis]
-    candidates: list[CandidateDiagnosis]
-    deterministic_recovered: bool
-    prompt_kind: str
-
-
-def diagnose_candidate(
-    engine,
-    mosque_id: str,
-    *,
-    candidate_root: Path,
-    today: date | None = None,
-    horizon_days: int = 60,
-    fetcher=fetch,
-    renderer=None,
-    nav_renderer=None,
-) -> DiagnoseReport:
-    """Inspect a candidate source without authoring it. Loads the bundle, summarizes
-    each page's evidence, enumerates deterministic config candidates and verifies each
-    in memory, and reports the prompt kind a model would get if the deterministic pass
-    cannot recover. Pure diagnosis — nothing is persisted and no model is called."""
-    bundle = CandidateBundle.load(mosque_id, candidate_root)
-    if bundle is None or not bundle.candidates:
-        return DiagnoseReport(mosque_id, False, [], [], False, "none")
-
-    evidence = bundle.evidence
-    pages = [
-        PageDiagnosis(
-            url=p.url, page_class=p.page_class, n_tables=len(p.tables),
-            n_media=len(p.media_links), n_widgets=len(p.widget_hints),
-            n_iframes=len(p.iframes), js_hints=list(p.js_hints),
-            terminal_hints=list(p.terminal_hints),
-        )
-        for p in evidence
-    ]
-
-    candidates: list[CandidateDiagnosis] = []
-    recovered = False
-    for cand in enumerate_candidates(evidence):
-        attempt = verify_candidate(
-            cand, today=today, horizon_days=horizon_days, fetcher=fetcher,
-            renderer=renderer, nav_renderer=nav_renderer,
-        )
-        candidates.append(
-            CandidateDiagnosis(
-                source=cand.source, reason=cand.reason, ok=attempt.ok,
-                triage_status=attempt.triage_status, rows_count=attempt.rows_count,
-                reasons=attempt.reasons,
-            )
-        )
-        recovered = recovered or attempt.ok
-
-    if recovered:
-        prompt_kind = "none"
-    elif evidence:
-        prompt_kind = route_prompt_kind(evidence)
-    else:
-        prompt_kind = "legacy"
-    return DiagnoseReport(mosque_id, True, pages, candidates, recovered, prompt_kind)
 
 
 # ── attempt history (Phase 6) ─────────────────────────────────────────────────
@@ -627,7 +381,7 @@ def author_mosque(
             _Stage(fallback, (fallback_model,), allow_bespoke=True, feedback=False, browse=True)
         )
 
-    initial_kind = route_prompt_kind(evidence) if evidence else "legacy"
+    initial_kind = route_prompt_kind(evidence)  # PromptKind.LEGACY when evidence is empty
     history: list[dict] = []
     detail: str | None = None
     model_calls = 0
@@ -655,7 +409,7 @@ def author_mosque(
                 if stage.browse:
                     prompt = build_browse_prompt(bundle)
                 else:
-                    base = _build_prompt(kind, bundle, evidence, failed)
+                    base = build_prompt(kind, bundle, evidence, failed)
                     prompt = (
                         base if i == 0
                         else build_feedback_prompt(base, prev_reply, detail or "")
@@ -730,8 +484,9 @@ def order_by_city_size(mosques: list[Mosque]) -> list[Mosque]:
 
 class Budget:
     """Thread-safe spend cap. Workers reserve a slot before a chargeable harness
-    call and refund it when the attempt turns out free (skipped/no_candidate),
-    so the ``max_calls`` cap holds under concurrency."""
+    call and refund it when the attempt turns out to have made no chargeable call
+    (skipped/no_candidate, the --no-model lane, or a deterministic recovery), so
+    the ``max_calls`` cap counts model spend — not free wins — under concurrency."""
 
     def __init__(self, max_calls: int) -> None:
         self._max = max_calls
@@ -754,9 +509,6 @@ class Budget:
     def spent(self) -> int:
         with self._lock:
             return self._spent
-
-
-_FREE_OUTCOMES = {"no_candidate", "skipped", "no_model"}
 
 
 def _drain_pool[T](
@@ -857,7 +609,12 @@ def run_authoring(
             if snap is not None:
                 _restore_source(engine, mid, snap)
             raise
-        if out.outcome in _FREE_OUTCOMES:
+        # Refund whenever no chargeable call was made — skipped/no_candidate, the
+        # --no-model lane, AND a free deterministic recovery (which authors with
+        # model_calls==0). The outcome name alone can't tell a deterministic
+        # 'authored' from a paid one, so the budget must key off actual spend, not
+        # the bucket — otherwise free wins silently burn the cap.
+        if out.model_calls == 0 and out.fallback_calls == 0:
             budget.refund()
         return out
 
@@ -944,8 +701,8 @@ def run_reauthor(
             nav_renderer=nav_renderer, allowed_statuses=frozenset({"needs_reauthor"}),
             feedback_retries=feedback_retries, runs_root=runs_root,
         )
-        if out.outcome in _FREE_OUTCOMES:
-            budget.refund()
+        if out.model_calls == 0 and out.fallback_calls == 0:
+            budget.refund()  # no chargeable call (free deterministic win / skip)
         # The model failed to improve on what we had — put the prior config back so
         # a flaky-but-correct config survives a bad re-author roll. A terminal
         # no_timetable verdict during re-author is treated the same way: a retained

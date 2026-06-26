@@ -7,6 +7,7 @@ import typer
 from directory.config import Settings
 from directory.db import init_db, make_engine
 from directory.ingest.author import (
+    SPEND_KEYS,
     AuthorOutcome,
     author_mosque,
     categorize_outcome,
@@ -15,6 +16,7 @@ from directory.ingest.author import (
     run_reauthor,
     run_verify_retry,
     summarize_outcomes,
+    tally_outcome,
 )
 from directory.ingest.blocklist import load_blocklist
 from directory.ingest.discover import discover_mosque, run_discovery
@@ -95,18 +97,19 @@ def _make_reporter(label: str):
         if result is None:  # budget exhausted / not dispatched — nothing to show
             return
         if isinstance(result, AuthorOutcome):
+            # One bucketing rule, shared with the end-of-run summary, so the live
+            # progress and the final tally cannot drift.
+            tally_outcome(tally, result)
             status = categorize_outcome(result)
             ident = result.mosque_id
             model = result.model
             rows = None
-            tally["model_calls"] += result.model_calls
-            tally["fallback_calls"] += result.fallback_calls
         else:
             status = getattr(result, "outcome", None) or getattr(result, "triage_status", "?")
             ident = getattr(result, "mosque_id", None) or getattr(result, "source_id", "?")
             model = getattr(result, "model", None)
             rows = getattr(result, "rows_written", None)
-        tally[status] += 1
+            tally[status] += 1
         extra = f" model={model}" if model else ""
         if rows is not None:
             extra += f" rows={rows}"
@@ -348,8 +351,10 @@ def author(
             )
     except KeyboardInterrupt:
         request_shutdown()  # idempotent: ensure no agent subprocess is left running
+        # Count mosques, not calls: the spend keys live in the same tally.
+        mosques = sum(v for k, v in tally.items() if k not in SPEND_KEYS)
         typer.secho(
-            f"\nInterrupted after {sum(tally.values())} mosque(s) in {elapsed():.0f}s; "
+            f"\nInterrupted after {mosques} mosque(s) in {elapsed():.0f}s; "
             "in-flight agents terminated.",
             err=True, fg=typer.colors.YELLOW,
         )

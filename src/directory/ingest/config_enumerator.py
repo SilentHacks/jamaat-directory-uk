@@ -30,10 +30,10 @@ from directory.ingest.extractors.config_schema import (
 from directory.ingest.extractors.engine import WIDGET_EXTRACTORS
 from directory.ingest.extractors.platforms import base as platforms
 from directory.ingest.extractors.platforms.generic_table import (
-    _horizontal_multiday,
-    _horizontal_single_day,
-    _transpose_multiday,
-    _vertical_single_day,
+    horizontal_multiday,
+    horizontal_single_day,
+    transpose_multiday,
+    vertical_single_day,
 )
 from directory.ingest.fetch import FetchResult, fetch, html_hash
 from directory.ingest.verify import VerifyAttempt, verify_candidate
@@ -67,10 +67,10 @@ def _table_candidates(page: PageEvidence) -> list[ConfigCandidate]:
         conf = _table_confidence(len(t.prayers_named), t.time_count)
         # Orientation helpers, richest first; the engine reads each the same way.
         orientations = (
-            ("table_horizontal_multiday", _horizontal_multiday(t.selector, header, body)),
-            ("table_transpose_multiday", _transpose_multiday(t.selector, matrix)),
-            ("table_horizontal_single_day", _horizontal_single_day(t.selector, header, body)),
-            ("table_vertical_single_day", _vertical_single_day(t.selector, header, body)),
+            ("table_horizontal_multiday", horizontal_multiday(t.selector, header, body)),
+            ("table_transpose_multiday", transpose_multiday(t.selector, matrix)),
+            ("table_horizontal_single_day", horizontal_single_day(t.selector, header, body)),
+            ("table_vertical_single_day", vertical_single_day(t.selector, header, body)),
         )
         # Richest recognised orientation wins per table (helpers are ordered
         # richest-first), mirroring the generic_table detector.

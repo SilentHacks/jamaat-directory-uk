@@ -1,8 +1,26 @@
 import re
+from enum import StrEnum
 
 from directory.domain import Prayer
 from directory.ingest.discover import CandidateBundle
-from directory.ingest.evidence import PageEvidence, TableEvidence
+from directory.ingest.evidence import MEDIA_TIMETABLE_SCORE, PageEvidence, TableEvidence
+
+
+class PromptKind(StrEnum):
+    """Which narrow authoring prompt a page set warrants. A str-enum so it stays
+    interchangeable with the bare strings the funnel and its tests already use,
+    while giving the routing/registry a single typed vocabulary instead of three
+    modules hardcoding the same literals."""
+
+    LEGACY = "legacy"  # pre-evidence bundle → the single-shot prompt
+    TABLE_CHOICE = "table_choice"  # several tables: pick the timetable, then map it
+    TABLE_REPAIR = "table_repair"  # one table: map its columns
+    MEDIA = "media"  # image/PDF timetable links
+    WIDGET = "widget"  # embedded prayer-time widget
+    TERMINAL = "terminal"  # likely no timetable (under construction / wrong site)
+    UNKNOWN = "unknown"  # fits no clean category → full schema
+    NONE = "none"  # diagnosis-only: deterministic recovery succeeded, no prompt
+
 
 _PRAYERS = ", ".join(p.value for p in Prayer)
 
@@ -456,3 +474,52 @@ def build_unknown_prompt(evidence: list[PageEvidence]) -> str:
     parts.append("")
     parts.append(_SCHEMA_HINT)
     return "\n".join(parts)
+
+
+# ── prompt routing + dispatch (Phase 5) ───────────────────────────────────────
+
+
+def route_prompt_kind(evidence: list[PageEvidence]) -> PromptKind:
+    """The narrow prompt kind that fits the strongest evidence on the page set:
+    table → media → widget → terminal → unknown. An evidence-less (pre-evidence)
+    bundle routes to the legacy single-shot prompt."""
+    if not evidence:
+        return PromptKind.LEGACY
+    if any(len(p.tables) > 1 for p in evidence):
+        return PromptKind.TABLE_CHOICE
+    if any(p.tables for p in evidence):
+        return PromptKind.TABLE_REPAIR
+    if any(m.score >= MEDIA_TIMETABLE_SCORE for p in evidence for m in p.media_links):
+        return PromptKind.MEDIA
+    if any(p.widget_hints for p in evidence):
+        return PromptKind.WIDGET
+    if any(p.terminal_hints for p in evidence):
+        return PromptKind.TERMINAL
+    return PromptKind.UNKNOWN
+
+
+# kind → builder. Builders that ignore the bundle/failed args still take them so the
+# dispatch is uniform. LEGACY is handled in build_prompt (it needs the bundle, not
+# the evidence).
+_PROMPT_BUILDERS = {
+    PromptKind.TABLE_CHOICE: lambda evidence, failed: build_table_choice_prompt(evidence, failed),
+    PromptKind.TABLE_REPAIR: lambda evidence, failed: build_table_repair_prompt(evidence, failed),
+    PromptKind.MEDIA: lambda evidence, failed: build_media_prompt(evidence),
+    PromptKind.WIDGET: lambda evidence, failed: build_widget_prompt(evidence),
+    PromptKind.TERMINAL: lambda evidence, failed: build_terminal_classification_prompt(evidence),
+    PromptKind.UNKNOWN: lambda evidence, failed: build_unknown_prompt(evidence),
+}
+
+
+def build_prompt(
+    kind: PromptKind,
+    bundle: CandidateBundle,
+    evidence: list[PageEvidence],
+    failed: list[tuple[str, str]],
+) -> str:
+    """Build the prompt for ``kind``. ``legacy`` (or any evidence-less bundle) falls
+    back to the single-shot prompt, so pre-evidence bundles behave exactly as
+    before."""
+    if kind is PromptKind.LEGACY or not evidence:
+        return build_author_prompt(bundle)
+    return _PROMPT_BUILDERS[kind](evidence, failed)

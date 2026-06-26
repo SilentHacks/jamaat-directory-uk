@@ -11,6 +11,8 @@ make the retry specific to what actually went wrong.
 
 from enum import Enum
 
+from directory.ingest.prompt import PromptKind
+
 
 class FailureKind(Enum):
     INVALID_JSON = "invalid_json"
@@ -64,16 +66,18 @@ _TABLE_REPAIR_FAILURES = frozenset(
         FailureKind.INVALID_SCHEMA,
     }
 )
-_TABLE_KINDS = frozenset({"table_repair", "table_choice", "unknown"})
+_TABLE_KINDS = frozenset(
+    {PromptKind.TABLE_REPAIR, PromptKind.TABLE_CHOICE, PromptKind.UNKNOWN}
+)
 
 
-def feedback_prompt_kind(failure: FailureKind, current: str) -> str:
+def feedback_prompt_kind(failure: FailureKind, current: PromptKind) -> PromptKind:
     """The prompt kind to retry with, given how the last attempt failed and what
     kind it was. A table-shaped failure on a table/unknown prompt escalates to a
     table-repair; a fetch-empty page is routed to terminal classification; anything
     else keeps the current kind (INVALID_JSON just re-asks for clean JSON)."""
     if failure in _TABLE_REPAIR_FAILURES and current in _TABLE_KINDS:
-        return "table_repair"
+        return PromptKind.TABLE_REPAIR
     if failure == FailureKind.FETCH_EMPTY:
-        return "terminal"
+        return PromptKind.TERMINAL
     return current

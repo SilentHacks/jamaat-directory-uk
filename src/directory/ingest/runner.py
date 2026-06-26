@@ -19,7 +19,7 @@ PARTIAL_HORIZON = "partial_horizon"
 DEFERRED_MEDIA = "deferred_media"
 # Shapes whose timetable is an image/PDF the engine does not parse: classified
 # and recorded here, daily extraction deferred to a later phase.
-_MEDIA_SHAPES = {"image", "pdf"}
+MEDIA_SHAPES = {"image", "pdf"}
 
 
 @dataclass
@@ -50,8 +50,6 @@ class ExtractionEvaluation:
     rows: list[OccurrenceRow]
     gate: GateResult | None
     flags: list[str]
-    docs_count: int
-    expected_docs_count: int
     confidence: float
     html_hash: str | None
     media: bool
@@ -81,12 +79,12 @@ def _evaluate_media(
     if jfail is not None:
         return ExtractionEvaluation(
             ok=False, lane="auto_reject", triage_status="needs_reauthor", rows=[],
-            gate=None, flags=[], docs_count=0, expected_docs_count=0, confidence=0.0,
+            gate=None, flags=[], confidence=0.0,
             html_hash=None, media=True, error=f"deferred media jumuah: {jfail}",
         )
     return ExtractionEvaluation(
         ok=True, lane="deferred", triage_status=DEFERRED_MEDIA, rows=rows, gate=None,
-        flags=[], docs_count=0, expected_docs_count=0, confidence=0.0, html_hash=None,
+        flags=[], confidence=0.0, html_hash=None,
         media=True, error=None,
     )
 
@@ -107,7 +105,7 @@ def evaluate_config(
     config good?", shared by the daily extractor and the in-memory verifier."""
     today = today or date.today()
 
-    if config.shape in _MEDIA_SHAPES:
+    if config.shape in MEDIA_SHAPES:
         return _evaluate_media(config, today=today, horizon_days=horizon_days)
 
     horizon_end = today + timedelta(days=horizon_days)
@@ -119,8 +117,8 @@ def evaluate_config(
     if err or not docs:
         return ExtractionEvaluation(
             ok=False, lane="auto_reject", triage_status="needs_reauthor", rows=[],
-            gate=None, flags=[], docs_count=0, expected_docs_count=expected,
-            confidence=0.0, html_hash=None, media=False, error=err or "empty body",
+            gate=None, flags=[], confidence=0.0, html_hash=None, media=False,
+            error=err or "empty body",
         )
 
     result = extract_documents(docs, config, today=today)
@@ -143,8 +141,7 @@ def evaluate_config(
 
     return ExtractionEvaluation(
         ok=ok, lane=gate.lane, triage_status=triage, rows=rows, gate=gate, flags=flags,
-        docs_count=len(docs), expected_docs_count=expected, confidence=gate.confidence,
-        html_hash=html_hash(combined_html), media=False,
+        confidence=gate.confidence, html_hash=html_hash(combined_html), media=False,
         error=None if ok else "; ".join(gate.reasons),
     )
 
