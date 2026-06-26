@@ -412,7 +412,9 @@ def inspect_candidate(
     if report.deterministic_recovered:
         typer.echo("Deterministic recovery: YES (no model call needed)")
     else:
-        typer.echo(f"Deterministic recovery: no — model prompt kind would be '{report.prompt_kind}'")
+        typer.echo(
+            f"Deterministic recovery: no — model prompt kind would be '{report.prompt_kind}'"
+        )
 
 
 @app.command()

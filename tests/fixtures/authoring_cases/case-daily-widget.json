@@ -1,0 +1,14 @@
+{
+  "mosque_id": "case-daily-widget",
+  "base_url": "https://ex.example/",
+  "pages": [
+    {
+      "url": "https://ex.example/",
+      "html_fixture": "daily_widget.html"
+    }
+  ],
+  "expected": {
+    "triage_status": "authored",
+    "model_used": false
+  }
+}

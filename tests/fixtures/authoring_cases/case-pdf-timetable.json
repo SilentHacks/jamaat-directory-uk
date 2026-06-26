@@ -1,0 +1,16 @@
+{
+  "mosque_id": "case-pdf-timetable",
+  "base_url": "https://ex.example/",
+  "pages": [
+    {
+      "url": "https://ex.example/",
+      "html_fixture": "pdf_home.html"
+    }
+  ],
+  "expected": {
+    "triage_status": "deferred_media",
+    "platform": "enumerator",
+    "config_shape": "pdf",
+    "model_used": false
+  }
+}

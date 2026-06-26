@@ -1,0 +1,20 @@
+{
+  "mosque_id": "case-multi-page-second-table",
+  "base_url": "https://ex.example/",
+  "pages": [
+    {
+      "url": "https://ex.example/",
+      "html_fixture": "bad_home.html"
+    },
+    {
+      "url": "https://ex.example/prayer-times",
+      "html_fixture": "monthly_table.html"
+    }
+  ],
+  "expected": {
+    "triage_status": "authored",
+    "platform": "generic_table",
+    "config_shape": "html_table",
+    "model_used": false
+  }
+}

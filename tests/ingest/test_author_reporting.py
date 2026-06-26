@@ -10,8 +10,8 @@ from directory.ingest.author import (
     diagnose_candidate,
     summarize_outcomes,
 )
-from directory.ingest.evidence import build_page_evidence
 from directory.ingest.discover import Candidate, CandidateBundle
+from directory.ingest.evidence import build_page_evidence
 from directory.ingest.fetch import FetchResult
 from directory.models import Mosque, Source
 from tests.conftest import FakeBrowsingHarness, FakeHarness
@@ -61,8 +61,10 @@ def _bundle(mid="m1"):
 
 
 def test_categorize_splits_deterministic_vs_model_authored():
-    assert categorize_outcome(AuthorOutcome("m", "authored", model=None)) == "deterministic_authored"
-    assert categorize_outcome(AuthorOutcome("m", "authored", model="opus")) == "model_authored"
+    det = AuthorOutcome("m", "authored", model=None)
+    mod = AuthorOutcome("m", "authored", model="opus")
+    assert categorize_outcome(det) == "deterministic_authored"
+    assert categorize_outcome(mod) == "model_authored"
 
 
 def test_categorize_splits_wrong_site_from_no_timetable():
@@ -73,7 +75,8 @@ def test_categorize_splits_wrong_site_from_no_timetable():
 
 
 def test_categorize_passes_through_other_outcomes():
-    for raw in ("review", "deferred_media", "needs_reauthor", "skipped", "no_candidate", "no_model"):
+    raws = ("review", "deferred_media", "needs_reauthor", "skipped", "no_candidate", "no_model")
+    for raw in raws:
         assert categorize_outcome(AuthorOutcome("m", raw)) == raw
 
 
