@@ -159,6 +159,33 @@ def test_image_timetable_defers_without_escalating(engine, tmp_path):
         assert occ and all(o.prayer == "jumuah" for o in occ)
 
 
+UNSUPPORTED_WIDGET_OUTPUT = json.dumps(
+    {
+        "url": "https://m1.example/prayer-times",
+        "config": {
+            "shape": "widget",
+            "widget": {"platform": "masjid247"},
+        },
+    }
+)
+
+
+def test_unsupported_widget_platform_marks_needs_reauthor(engine, tmp_path):
+    # A widget platform with no registered extractor must NOT raise out of the
+    # worker (which would abort a whole batch) — it is a failed attempt.
+    _candidate_mosque(engine)
+    _bundle().save(tmp_path)
+    harness = FakeHarness(UNSUPPORTED_WIDGET_OUTPUT)
+
+    out = author_mosque(engine, "m1", harness=harness, candidate_root=tmp_path,
+                        models=("cheap", "strong"), today=date(2026, 6, 1), horizon_days=5,
+                        fetcher=_fetcher, feedback_retries=0)
+
+    assert out.outcome == "needs_reauthor"
+    with session_scope(engine) as s:
+        assert repo.get_source(s, "m1").triage_status == "needs_reauthor"
+
+
 def test_skips_non_candidate_source(engine, tmp_path):
     with session_scope(engine) as s:
         s.add(Mosque(id="m1", name="M1", lat=52.0, lng=-1.0))

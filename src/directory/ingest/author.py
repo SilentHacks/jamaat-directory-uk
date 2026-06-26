@@ -30,6 +30,7 @@ from directory.ingest.discover import CandidateBundle
 from directory.ingest.evidence import PageEvidence
 from directory.ingest.extractors.bespoke import load_bespoke, save_module
 from directory.ingest.extractors.config_schema import SourceConfig
+from directory.ingest.extractors.engine import WIDGET_EXTRACTORS
 from directory.ingest.failure import classify_failure, feedback_prompt_kind
 from directory.ingest.fetch import fetch
 from directory.ingest.harness import (
@@ -181,6 +182,16 @@ def _config_from_decision(
             raise ValueError("bespoke config without module_code")
         save_module(config.bespoke.module, decision.module_code, root=ctx.bespoke_root)
         load_bespoke(ctx.bespoke_root)
+    if config.shape == "widget":
+        # A widget platform with no registered extractor would raise deep in
+        # extraction (uncaught) and abort the whole authoring batch. Reject it
+        # here so it becomes an "invalid config" attempt (feedback / needs_reauthor).
+        platform = config.widget.platform if config.widget else None
+        if platform not in WIDGET_EXTRACTORS:
+            raise ValueError(
+                f"unsupported widget platform {platform!r}; "
+                f"supported: {sorted(WIDGET_EXTRACTORS)}"
+            )
     return config
 
 
