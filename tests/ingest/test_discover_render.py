@@ -111,6 +111,50 @@ def test_js_shell_escalates_and_authors(engine, tmp_path):
         assert bool(src.requires_js) is True
 
 
+# A rendered DOM that carries the real prayer times but in a shape the
+# deterministic enumerator cannot auto-author (no parseable date axis), so discovery
+# falls through to the AI candidate bundle. A1 requires the bundle to carry THIS
+# rendered HTML, not the empty pre-hydration shell.
+RENDERED_UNVERIFIABLE = """
+<html><body><table>
+  <tr><th>When</th><th>Fajr</th><th>Dhuhr</th><th>Asr</th><th>Maghrib</th><th>Isha</th></tr>
+  <tr><td>today</td><td>05:00</td><td>13:15</td><td>18:30</td><td>21:10</td><td>22:30</td></tr>
+  <tr><td>tomorrow</td><td>05:02</td><td>13:16</td><td>18:31</td><td>21:11</td><td>22:31</td></tr>
+</table></body></html>
+"""
+
+
+def test_unverifiable_js_render_feeds_rendered_dom_to_bundle(engine, tmp_path):
+    """A1: when a JS page renders but cannot be auto-authored, the candidate bundle
+    handed to the model must contain the rendered DOM (with the real times) and flag
+    the page requires_js — never the empty static shell the model cannot read."""
+    from directory.ingest.discover import CandidateBundle
+
+    _mosque(engine, "spa3", "https://spa3.example/")
+    fetcher = _js_fetcher(
+        static_pages={
+            "https://spa3.example/": HOME_WITH_LINKS,
+            "https://spa3.example/prayer-times": SHELL_TABLE,  # empty tbody
+        },
+        rendered_pages={"https://spa3.example/prayer-times": RENDERED_UNVERIFIABLE},
+    )
+    out = discover_mosque(engine, "spa3", fetcher=fetcher, client=_live_client(),
+                          candidate_root=tmp_path, today=date(2026, 6, 1), horizon_days=20,
+                          renderer=lambda u: RENDERED_UNVERIFIABLE)
+    assert out.outcome == "candidate"
+
+    bundle = CandidateBundle.load("spa3", tmp_path)
+    pt = next(c for c in bundle.candidates if c.url.endswith("/prayer-times"))
+    assert "05:00" in pt.region_html  # rendered-only time reached the model
+    assert pt.requires_js is True
+    # Evidence is built from the rendered DOM too, so the table is visible to the
+    # type-specific prompt router (not lost as an empty shell).
+    ev = next(e for e in bundle.evidence if e.url.endswith("/prayer-times"))
+    assert any(t.time_count > 0 for t in ev.tables)
+    with session_scope(engine) as s:
+        assert bool(repo.get_source(s, "spa3").requires_js) is True
+
+
 def test_no_renderer_means_no_escalation(engine, tmp_path):
     """Without a renderer the JS shell falls through to candidate (legacy behaviour)."""
     _mosque(engine, "spa2", "https://spa2.example/")

@@ -177,8 +177,11 @@ def _widget_candidates(page: PageEvidence) -> list[ConfigCandidate]:
         )
         out.append(
             ConfigCandidate(
+                # A recognised provider with a registered extractor is a platform
+                # match (so it ranks as specific and is attributed by provider name),
+                # reached via evidence rather than a handed-page detector.
                 url=w.data_url or page.url, config=config,
-                source=f"enumerator:widget_{w.provider}",
+                source=f"platform:{w.provider}",
                 reason=f"{w.provider} prayer widget", confidence=w.confidence,
             )
         )

@@ -201,9 +201,18 @@ def test_terminal_prompt_allows_no_timetable():
     assert "under construction" in p.lower()
 
 
-def test_unknown_prompt_falls_back_to_full_schema():
-    p = build_unknown_prompt(_ev(MONTHLY))
-    assert "html_table" in p and "html_repeated" in p
+def test_unknown_prompt_includes_region_markup_and_full_schema():
+    # A page that fits no clean category must still hand the model the real DOM
+    # (the windowed region), not just a text summary, plus the full schema.
+    region = "<div class='times'>Fajr 05:00 Dhuhr 13:30</div>"
+    bundle = CandidateBundle(
+        "m1", "https://m.example/",
+        [Candidate(url="https://m.example/p", score=5.0, region_html=region, text="t")],
+    )
+    p = build_unknown_prompt(bundle, _ev(MONTHLY))
+    assert "html_table" in p and "html_repeated" in p   # full schema present
+    assert "class='times'" in p                          # real markup present
+    assert "page_class:" in p                            # evidence summary present
 
 
 def test_widget_prompt_asks_for_provider():

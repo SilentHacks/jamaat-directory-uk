@@ -159,3 +159,67 @@ class SourceConfig(BaseModel):
 
     def to_json(self) -> str:
         return self.model_dump_json(exclude_none=True)
+
+
+_GRID_SHAPES = frozenset({"html_table", "html_repeated", "dom_records"})
+
+
+def authoring_problems(config: SourceConfig) -> list[str]:
+    """Structural defects in a model-authored grid config that the pydantic schema
+    accepts but the engine would silently extract **zero rows** from — a missing
+    column index/selector, no date axis, an absent row selector. Returns
+    human-readable problems (empty list when sound) so the authoring funnel can feed
+    the model an actionable reason ("column 2 needs a 0-based 'index'") instead of a
+    bare "no occurrences produced" that it cannot learn from.
+
+    Scoped to grid shapes; widget/rules/media/bespoke carry no column grid. The
+    widget *platform* (is there a registered extractor?) is checked separately in the
+    funnel, which can see the extractor registry without a circular import here."""
+    if config.shape not in _GRID_SHAPES:
+        return []
+    grid = config.grid
+    if grid is None:  # the pydantic validator already guards this; belt and braces.
+        return [f"shape {config.shape!r} requires a grid spec"]
+
+    problems: list[str] = []
+    uses_selector = config.shape == "html_repeated"
+
+    if uses_selector and not (grid.row_selector and grid.row_selector.strip()):
+        problems.append("html_repeated needs a 'row_selector' for each day item")
+
+    if not grid.columns:
+        problems.append("grid has no columns to read prayer times from")
+    for i, col in enumerate(grid.columns):
+        who = f"column {i} ({col.kind} {col.prayer.value if col.prayer else 'label'})"
+        if uses_selector:
+            if not (col.selector and col.selector.strip()):
+                problems.append(f"{who} needs a CSS 'selector' for html_repeated")
+        elif col.index is None:
+            problems.append(f"{who} needs a 0-based 'index' for {config.shape}")
+        elif col.index < 0:
+            problems.append(f"{who} has a negative index {col.index}")
+        if col.time_index is not None and col.time_index < 0:
+            problems.append(f"{who} has a negative time_index {col.time_index}")
+    if grid.prayer_label_index is not None and grid.prayer_label_index < 0:
+        problems.append("prayer_label_index is negative")
+
+    # Every grid config needs SOME date axis, or it extracts nothing: an explicit
+    # date column/selector, a single-day flag, month sections, or paging.
+    has_date_axis = (
+        grid.date is not None
+        or bool(grid.single_day)
+        or bool(grid.month_sections)
+        or config.paging is not None
+    )
+    if not has_date_axis:
+        problems.append(
+            "no date axis: set 'date', or 'single_day' (today-only), or "
+            "'month_sections', or 'paging'"
+        )
+    elif grid.date is not None and not grid.single_day and not grid.month_sections:
+        if uses_selector and not (grid.date.selector and grid.date.selector.strip()):
+            problems.append("date needs a 'selector' for html_repeated")
+        if not uses_selector and grid.date.index is None:
+            problems.append(f"date needs a 0-based 'index' for {config.shape}")
+
+    return problems

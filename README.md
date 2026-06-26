@@ -122,7 +122,10 @@ directory author --harness opencode    # legacy OpenCode cheap→strong ladder
 
 Model specs carry effort as an `@suffix` (`opus@low`, `opus@high`). Configure via
 env: `DIRECTORY_AUTHOR_HARNESS` (default `claude-code`), `DIRECTORY_CLAUDE_CODE_MODEL`,
-`DIRECTORY_CLAUDE_CODE_FALLBACK_MODEL`, `DIRECTORY_AUTHOR_MAX_CALLS`.
+`DIRECTORY_CLAUDE_CODE_FALLBACK_MODEL`, `DIRECTORY_AUTHOR_MAX_CALLS`,
+`DIRECTORY_AUTHOR_HARNESS_TIMEOUT` (per-call subprocess ceiling in seconds,
+default `600` — a tool-enabled agent re-fetching the live page to verify its
+selectors needs headroom past a bare generation).
 
 ### Recovering the `needs_reauthor` cohort
 

@@ -102,6 +102,11 @@ class Candidate:
     score: float
     region_html: str
     text: str
+    # True when ``region_html`` came from a headless render (the static fetch was a
+    # JS shell). Carried so the model's verify and the daily extract render this page
+    # instead of fetching the empty pre-hydration HTML. Defaulted for backward compat
+    # with bundles written before this field existed.
+    requires_js: bool = False
 
 
 @dataclass
@@ -343,15 +348,22 @@ def _bundle_from_pages(
     *,
     max_candidates: int = 5,
     evidence: list[PageEvidence] | None = None,
+    rendered_urls: frozenset[str] = frozenset(),
 ) -> CandidateBundle:
     """Build a CandidateBundle from pages already fetched during discovery, so the
     AI hand-off costs no additional requests. The structured per-page evidence
     (already built for the terminal-classification check) rides along so prompts
-    and the enumerator do not have to re-parse the raw HTML."""
+    and the enumerator do not have to re-parse the raw HTML. ``rendered_urls`` marks
+    the pages whose HTML is a headless render, so their candidates flag requires_js."""
     candidates: list[Candidate] = []
     for url, html in fetched_pages.items():
         region, text = strip_to_region(html)
-        candidates.append(Candidate(url=url, score=_score(text), region_html=region, text=text))
+        candidates.append(
+            Candidate(
+                url=url, score=_score(text), region_html=region, text=text,
+                requires_js=url in rendered_urls,
+            )
+        )
     candidates.sort(key=lambda c: c.score, reverse=True)
     return CandidateBundle(
         mosque_id, base_url, candidates[:max_candidates], evidence=evidence or []
@@ -442,8 +454,8 @@ def discover_mosque(
     # timetable is injected by JavaScript is never skipped as "static". Only the
     # pages that actually look JS-hidden are rendered, never the whole corpus.
     requires_js = False
+    rendered_pages: dict[str, str] = {}
     if best is None and renderer is not None:
-        rendered_pages: dict[str, str] = {}
         for url, html in fetched_pages.items():
             if not _page_needs_render(url, html):
                 continue
@@ -479,11 +491,20 @@ def discover_mosque(
         )
         return DiscoverOutcome(mosque_id, result.triage_status, match.platform)
 
+    # Merge the JS-rendered DOM over the static fetch so EVERY downstream consumer
+    # — evidence, the enumerator, the terminal check, and the AI hand-off bundle —
+    # sees the timetable the browser injected, not the pre-render shell. Rendering
+    # the JS-shell pages was already paid for above (during the static-miss retry);
+    # discarding it left the model authoring blind against serialized framework
+    # payloads. Pages we rendered are tracked so the bundle/source flag requires_js.
+    effective_pages = {**fetched_pages, **rendered_pages}
+    rendered_urls = frozenset(rendered_pages)
+
     # Deterministic miss → build structured evidence once (reused for the
     # enumerator, the terminal check, and the AI hand-off bundle).
     evidences = [
         build_page_evidence(html, url, today=today)
-        for url, html in fetched_pages.items()
+        for url, html in effective_pages.items()
     ]
 
     # Deterministic config enumeration: try the obvious configs the evidence implies
@@ -495,7 +516,7 @@ def discover_mosque(
     if enum_candidates:
         recovered = best_verified_candidate(
             enum_candidates, today=today, horizon_days=horizon_days,
-            fetcher=cached_fetcher(fetched_pages, fetcher),
+            fetcher=cached_fetcher(effective_pages, fetcher),
             renderer=renderer, nav_renderer=nav_renderer,
         )
         if recovered is not None:
@@ -525,20 +546,25 @@ def discover_mosque(
             )
         return DiscoverOutcome(mosque_id, "no_timetable", None, detail=last_status)
 
-    # Otherwise hand off to the AI funnel.
-    bundle = _bundle_from_pages(mosque_id, home_url, fetched_pages, evidence=evidences)
+    # Otherwise hand off to the AI funnel. The bundle carries the rendered DOM for
+    # JS pages (so the model sees the real timetable) and flags those candidates
+    # requires_js, so the source row — and the model's first verify — render instead
+    # of fetching the empty shell.
+    bundle = _bundle_from_pages(
+        mosque_id, home_url, effective_pages, evidence=evidences, rendered_urls=rendered_urls
+    )
     bundle.save(candidate_root)
-    best_url = bundle.candidates[0].url if bundle.candidates else None
+    top = bundle.candidates[0] if bundle.candidates else None
     with session_scope(engine, write=True) as s:
         repo.create_or_update_source(
             s,
             source_id=mosque_id,
             mosque_id=mosque_id,
-            url=best_url,
+            url=top.url if top else None,
             platform=None,
             shape=None,
             config=None,
-            requires_js=False,
+            requires_js=bool(top and top.requires_js),
             triage_status="candidate",
         )
     return DiscoverOutcome(mosque_id, "candidate", None)
