@@ -204,6 +204,43 @@ def test_terminal_no_timetable_none_for_empty_list():
     assert terminal_no_timetable([]) is None
 
 
+def test_near_empty_page_with_opaque_media_is_not_terminal():
+    # A near-empty body whose only content is an opaquely named image (score 0)
+    # may itself be a timetable — the classifier routes it to media_only, so the
+    # terminal verdict aborts (never hide a real timetable).
+    html = '<html><body><img src="/uploads/pt.jpg"></body></html>'
+    ev = build_page_evidence(html, "https://m.example/", today=TODAY)
+    assert ev.media_links and ev.media_links[0].score < MEDIA_TIMETABLE_SCORE
+    assert ev.page_class == "media_only"
+    assert terminal_no_timetable([ev]) is None
+
+
+def test_opaque_pdf_aborts_terminal_verdict_even_when_low_scoring():
+    # A PDF is almost never page chrome; even unscored it must block a terminal
+    # verdict on an otherwise-terminal page.
+    page = '<html><body><h1>Spice Garden Restaurant — our menu</h1>'
+    page += '<a href="/x.pdf">download</a></body></html>'
+    ev = build_page_evidence(page, "https://m.example/", today=TODAY)
+    assert ev.media_links[0].kind == "pdf"
+    assert ev.media_links[0].score < MEDIA_TIMETABLE_SCORE
+    assert terminal_no_timetable([ev]) is None
+
+
+def test_near_empty_spa_shell_is_js_shell_not_empty():
+    # A generic SPA shell (framework not in the named marker list) with almost no
+    # static text must be rescued from a terminal "empty" verdict.
+    html = '<html><body><div id="app"></div><script src="/app.js"></script></body></html>'
+    ev = build_page_evidence(html, "https://m.example/", today=TODAY)
+    assert ev.page_class == "js_shell"
+    assert terminal_no_timetable([ev]) is None
+
+
+def test_genuinely_empty_body_stays_empty():
+    ev = build_page_evidence(EMPTY, "https://m.example/", today=TODAY)
+    assert ev.page_class == "empty"
+    assert terminal_no_timetable([ev]) is not None
+
+
 def test_wrong_site_maps_to_wrong_site_last_status():
     evs = [build_page_evidence(RESTAURANT, "https://m.example/", today=TODAY)]
     result = terminal_no_timetable(evs)

@@ -58,6 +58,24 @@ _JS_MARKERS = (
     "squarespace", "wixstatic", "wix.com", "data-reactroot", 'id="root"',
     "masjidbox", "my-masjid.com", "mawaqit.net",
 )
+# Generic single-page-app mount points, for frameworks beyond the named platforms
+# above (Vue/Angular/Next/Nuxt/Quasar). Used only to rescue a *near-empty* static
+# body from a terminal "empty" verdict — a shell that still loads an app bundle may
+# hydrate a timetable, so it must reach rendering/the AI funnel.
+_SPA_MOUNT_MARKERS = (
+    'id="app"', "id='app'", 'id="__next"', 'id="__nuxt"', 'id="q-app"',
+    "ng-app", "ng-version", "app-root", "data-server-rendered",
+)
+
+
+def _has_js_app(soup: BeautifulSoup, html: str) -> bool:
+    """True when the page ships a client-side app bundle (a ``<script src>``) or a
+    recognised SPA mount point — i.e. a JS shell rather than a genuinely empty
+    page."""
+    if soup.find("script", src=True) is not None:
+        return True
+    low = html.lower()
+    return any(marker in low for marker in _SPA_MOUNT_MARKERS)
 
 
 def _visible_text(soup: BeautifulSoup) -> str:
@@ -190,7 +208,7 @@ class PageEvidence:
     terminal_hints: list[str] = field(default_factory=list)
 
     @classmethod
-    def from_dict(cls, d: dict) -> "PageEvidence":
+    def from_dict(cls, d: dict) -> PageEvidence:
         """Rebuild a PageEvidence from its serialized form (see
         ``CandidateBundle.load``). Tolerant of missing keys so an older bundle
         written without an ``evidence`` block still round-trips."""
@@ -475,6 +493,7 @@ def _classify(
     nav_hints: list[NavHint],
     js_hints: list[str],
     has_prayer_links: bool,
+    has_js_app: bool,
     url: str,
 ) -> tuple[PageClass, list[str]]:
     """Coarse, conservative routing class for a page plus the terminal hint phrases
@@ -523,6 +542,15 @@ def _classify(
     if spam:
         return "parked_or_spam", spam
     if n_text < _EMPTY_TEXT_THRESHOLD:
+        # A near-empty *static* body is "empty" only if it is genuinely empty. If
+        # it ships a JS app it is a shell that may hydrate a timetable; if its only
+        # content is a media link, that link may itself be an (opaquely named)
+        # timetable image/PDF. Either way it must reach rendering/the AI funnel,
+        # never a terminal verdict — the prime directive (never hide a timetable).
+        if media_links:
+            return "media_only", []
+        if has_js_app or js_hints:
+            return "js_shell", []
         return "empty", []
     business = _has_phrase(text_low, _BUSINESS_VOCAB)
     if business:
@@ -539,10 +567,15 @@ def build_page_evidence(
     html_hash: str | None = None,
     today: date | None = None,
 ) -> PageEvidence:
-    """Parse ``html`` once into a structured, serializable PageEvidence summary."""
+    """Parse ``html`` into a structured, serializable PageEvidence summary.
+
+    Two parses: ``soup`` keeps the full markup (tables/media/iframes/scripts);
+    ``text_soup`` is stripped of script/style by ``_visible_text`` and then reused
+    for month-nav leaf detection (which expects a stripped soup)."""
     soup = BeautifulSoup(html, "lxml")
     year = (today or date.today()).year
-    visible = _visible_text(BeautifulSoup(html, "lxml"))  # fresh soup; _visible_text mutates
+    text_soup = BeautifulSoup(html, "lxml")
+    visible = _visible_text(text_soup)  # mutates text_soup → script/style stripped
     title_el = soup.find("title")
     title = title_el.get_text(" ", strip=True) if title_el else None
 
@@ -553,8 +586,8 @@ def build_page_evidence(
     media = _media_links(soup, url)
     iframes = _iframes(soup, url)
     widgets = _widget_hints(iframes, html)
-    nav = _nav_hints(soup)
-    js = _js_hints(BeautifulSoup(html, "lxml"), html)
+    nav = _nav_hints(text_soup)
+    js = _js_hints(soup, html)
 
     page_class, terminal_hints = _classify(
         visible_text=visible,
@@ -565,6 +598,7 @@ def build_page_evidence(
         nav_hints=nav,
         js_hints=js,
         has_prayer_links=_has_prayer_links(soup),
+        has_js_app=_has_js_app(soup, html),
         url=url,
     )
 
@@ -628,7 +662,15 @@ def terminal_no_timetable(evidences: list[PageEvidence]) -> tuple[str, str] | No
     if not evidences:
         return None
     for e in evidences:
-        if any(m.score >= MEDIA_TIMETABLE_SCORE for m in e.media_links):
+        # Abort on any PDF (a document is almost never page chrome — a printable
+        # timetable is the common case) or any image that scores as a timetable.
+        # A near-empty page whose sole content is even an opaquely named media link
+        # was already routed to media_only by the classifier, so it never reaches
+        # here. A plain chrome logo (image, no hints) on a content-rich terminal
+        # page does not block the verdict.
+        if any(
+            m.kind == "pdf" or m.score >= MEDIA_TIMETABLE_SCORE for m in e.media_links
+        ):
             return None
         if e.widget_hints or e.iframes or e.nav_hints:
             return None

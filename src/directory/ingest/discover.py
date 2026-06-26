@@ -13,10 +13,10 @@ from directory import repository as repo
 from directory.db import session_scope
 from directory.ingest.blocklist import is_blocklisted
 from directory.ingest.evidence import (
+    _TIME_SCAN_RE,
     PageEvidence,
     _distinct_prayers,
     _page_needs_render,
-    _TIME_SCAN_RE,
     build_page_evidence,
     terminal_no_timetable,
 )

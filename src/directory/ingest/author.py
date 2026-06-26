@@ -546,8 +546,9 @@ def run_reauthor(
     run ``run_verify_retry`` first for the free salvage). Only sources that still
     have a candidate bundle on disk are eligible — a deterministic-discovery source
     has no bundle to prompt from and is left untouched. The prior config is
-    snapshotted and restored if the attempt ends back in ``needs_reauthor``, so a
-    non-deterministic model can never discard a config it failed to improve on."""
+    snapshotted and restored if the attempt ends back in ``needs_reauthor`` *or* the
+    model returns a terminal no_timetable verdict, so a non-deterministic model can
+    never discard a config it failed to improve on."""
     with session_scope(engine) as s:
         ids = [src.id for src in repo.reauthor_sources(s)]
     ids = [mid for mid in ids if CandidateBundle.load(mid, candidate_root) is not None]
@@ -568,8 +569,11 @@ def run_reauthor(
         if out.outcome in _FREE_OUTCOMES:
             budget.refund()
         # The model failed to improve on what we had — put the prior config back so
-        # a flaky-but-correct config survives a bad re-author roll.
-        if out.outcome == "needs_reauthor" and snap is not None:
+        # a flaky-but-correct config survives a bad re-author roll. A terminal
+        # no_timetable verdict during re-author is treated the same way: a retained
+        # config that run_verify_retry could not salvage must not be shelved on a
+        # single (possibly hallucinated) model classification.
+        if out.outcome in {"needs_reauthor", "no_timetable"} and snap is not None:
             _restore_source(engine, mid, snap)
         return out
 
