@@ -27,6 +27,14 @@ class Settings(BaseSettings):
     # Default model is DeepSeek V4 Flash. Command Code has no @effort concept, so
     # the high-effort --fallback knob does not apply.
     command_code_model: str = "deepseek/deepseek-v4-flash"
+    # Cap on Command Code conversation turns in -p mode. Its own default (10) is
+    # far too low for an author-then-verify loop (the agent hits the cap and
+    # returns an incomplete config). The real cost/runaway ceiling is the 600s
+    # subprocess timeout, not the turn count, so this is set generously high: high
+    # enough to never bind on legitimate authoring (~3-5x any realistic
+    # fetch→build→self-correct loop), while still cutting off a degenerate agent
+    # stuck in a fast tool-call loop. Not truly unbounded for exactly that reason.
+    command_code_max_turns: int = 100
     author_max_calls: int = 50
     # Hard subprocess ceiling for one single-shot harness call. A tool-enabled
     # agent that re-fetches the live page (WebFetch) to verify its selectors needs

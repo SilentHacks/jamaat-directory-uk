@@ -317,28 +317,32 @@ class _CommandCodeCLI(_SubprocessHarness):
     including web fetch), ``--trust`` auto-trusts the project (skips the initial
     permission prompt), and ``--skip-onboarding`` skips taste onboarding. Command
     Code has no ``@effort`` concept, so the model spec (e.g.
-    ``deepseek/deepseek-v4-flash``) is passed through verbatim. The prompt is the
+    ``deepseek/deepseek-v4-flash``) is passed through verbatim. ``max_turns`` caps
+    the conversation turns in ``-p`` mode; Command Code's own default (10) is too
+    low for an author-then-verify loop (the agent hits the cap and returns an
+    incomplete config), so a higher budget is passed when set. The prompt is the
     trailing positional — never placed right after ``-p``, whose optional
     ``[query]`` would otherwise swallow it."""
 
     name = "command-code"
 
     def __init__(
-        self, *, binary: str = "commandcode", timeout: float = 600.0, runner=_processes.run
+        self,
+        *,
+        binary: str = "commandcode",
+        timeout: float = 600.0,
+        runner=_processes.run,
+        max_turns: int | None = None,
     ) -> None:
         super().__init__(binary=binary, timeout=timeout, runner=runner)
+        self._max_turns = max_turns
 
     def _command(self, prompt: str, model: str) -> list[str]:
-        return [
-            self._binary,
-            "-p",
-            "--model",
-            model,
-            "--yolo",
-            "--skip-onboarding",
-            "--trust",
-            prompt,
-        ]
+        cmd = [self._binary, "-p", "--model", model]
+        if self._max_turns is not None:
+            cmd += ["--max-turns", str(self._max_turns)]
+        cmd += ["--yolo", "--skip-onboarding", "--trust", prompt]
+        return cmd
 
 
 class CommandCodeHarness(_CommandCodeCLI):
@@ -357,8 +361,9 @@ class CommandCodeHarness(_CommandCodeCLI):
         timeout: float = 600.0,
         runner=_processes.run,
         cwd: str | None = None,
+        max_turns: int | None = None,
     ) -> None:
-        super().__init__(binary=binary, timeout=timeout, runner=runner)
+        super().__init__(binary=binary, timeout=timeout, runner=runner, max_turns=max_turns)
         # Isolated scratch dir: keeps the tool-enabled agent out of the repo tree.
         self._cwd = cwd or tempfile.mkdtemp(prefix="jduk-author-")
 
@@ -380,8 +385,9 @@ class CommandCodeAgenticHarness(_CommandCodeCLI):
         token_budget: int = 200_000,
         timeout: float = 600.0,
         runner=_processes.run,
+        max_turns: int | None = None,
     ) -> None:
-        super().__init__(binary=binary, timeout=timeout, runner=runner)
+        super().__init__(binary=binary, timeout=timeout, runner=runner, max_turns=max_turns)
         self._page_budget = page_budget
         self._token_budget = token_budget
 

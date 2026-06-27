@@ -84,12 +84,16 @@ def _build_harness(settings, *, harness_name: str, fallback: bool, agentic: bool
         )
         return harness, models, fb, settings.author_model_strong
     if harness_name == "command-code":
-        harness = CommandCodeHarness(timeout=settings.author_harness_timeout)
+        harness = CommandCodeHarness(
+            timeout=settings.author_harness_timeout,
+            max_turns=settings.command_code_max_turns,
+        )
         models = (settings.command_code_model,)
         fb = (
             CommandCodeAgenticHarness(
                 page_budget=settings.author_page_budget,
                 token_budget=settings.author_token_budget,
+                max_turns=settings.command_code_max_turns,
             )
             if agentic
             else None

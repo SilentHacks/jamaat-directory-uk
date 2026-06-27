@@ -196,9 +196,28 @@ def test_command_code_builds_print_command_with_automated_run_flags():
     assert "--yolo" in cmd
     assert "--trust" in cmd
     assert "--skip-onboarding" in cmd
+    # no turn cap requested → the flag is omitted (Command Code's own default applies)
+    assert "--max-turns" not in cmd
     assert seen["kwargs"]["timeout"] == 120.0
     # runs in an isolated temp dir, never the repo
     assert seen["kwargs"]["cwd"].startswith(tempfile.gettempdir())
+
+
+def test_command_code_emits_max_turns_when_set():
+    seen = {}
+
+    def fake_runner(cmd, **kwargs):
+        seen["cmd"] = cmd
+        return SimpleNamespace(returncode=0, stdout="{}", stderr="")
+
+    CommandCodeHarness(runner=fake_runner, max_turns=30).run(
+        "p", model="deepseek/deepseek-v4-flash"
+    )
+
+    cmd = seen["cmd"]
+    assert cmd[cmd.index("--max-turns") + 1] == "30"
+    # the turn cap precedes the trailing prompt positional, never swallows it
+    assert cmd[-1] == "p"
 
 
 def test_command_code_name_and_nonzero_exit():
