@@ -12,7 +12,8 @@ class Settings(BaseSettings):
     snapshot_horizon_days: int = 45
     candidate_dir: Path = Path("data/candidates")
     # Default authoring backend. "claude-code" drives `claude -p`; "opencode" keeps
-    # the legacy OpenCode ladder (author_model_cheap → author_model_strong).
+    # the legacy OpenCode ladder (author_model_cheap → author_model_strong);
+    # "command-code" drives `commandcode -p` (DeepSeek V4 Flash by default).
     author_harness: str = "claude-code"
     author_model_cheap: str = "anthropic/claude-haiku-4-5"
     author_model_strong: str = "anthropic/claude-opus-4-8"
@@ -22,6 +23,10 @@ class Settings(BaseSettings):
     claude_code_model: str = "opus@low"
     claude_code_fallback_model: str = "opus@high"
     claude_code_agentic_model: str = "opus@low"
+    # Command Code drives `commandcode -p` with --yolo/--trust/--skip-onboarding.
+    # Default model is DeepSeek V4 Flash. Command Code has no @effort concept, so
+    # the high-effort --fallback knob does not apply.
+    command_code_model: str = "deepseek/deepseek-v4-flash"
     author_max_calls: int = 50
     # Hard subprocess ceiling for one single-shot harness call. A tool-enabled
     # agent that re-fetches the live page (WebFetch) to verify its selectors needs

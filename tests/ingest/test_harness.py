@@ -9,6 +9,8 @@ import pytest
 from directory.ingest.harness import (
     ClaudeCodeAgenticHarness,
     ClaudeCodeHarness,
+    CommandCodeAgenticHarness,
+    CommandCodeHarness,
     OpenCodeAgenticHarness,
     OpenCodeHarness,
     _Aborted,
@@ -165,6 +167,72 @@ def test_claude_code_agentic_allows_web_tools_and_embeds_budget():
     assert "WebFetch" in allowed and "WebSearch" in allowed
     assert cmd[cmd.index("--model") + 1] == "opus"
     assert cmd[cmd.index("--effort") + 1] == "low"
+    prompt_arg = cmd[-1]
+    assert "5 pages" in prompt_arg and "1000 tokens" in prompt_arg
+    assert seen["timeout"] == 300.0
+
+
+def test_command_code_builds_print_command_with_automated_run_flags():
+    seen = {}
+
+    def fake_runner(cmd, **kwargs):
+        seen["cmd"] = cmd
+        seen["kwargs"] = kwargs
+        return SimpleNamespace(returncode=0, stdout='{"shape":"rules"}', stderr="")
+
+    res = CommandCodeHarness(runner=fake_runner, timeout=120.0).run(
+        "do it", model="deepseek/deepseek-v4-flash"
+    )
+
+    assert res.ok is True
+    assert res.text == '{"shape":"rules"}'
+    assert res.model == "deepseek/deepseek-v4-flash"
+    cmd = seen["cmd"]
+    assert cmd[0] == "commandcode"
+    assert "-p" in cmd
+    assert cmd[-1] == "do it"  # prompt is the trailing positional
+    assert cmd[cmd.index("--model") + 1] == "deepseek/deepseek-v4-flash"
+    # non-interactive automated run: bypass prompts, trust project, skip onboarding
+    assert "--yolo" in cmd
+    assert "--trust" in cmd
+    assert "--skip-onboarding" in cmd
+    assert seen["kwargs"]["timeout"] == 120.0
+    # runs in an isolated temp dir, never the repo
+    assert seen["kwargs"]["cwd"].startswith(tempfile.gettempdir())
+
+
+def test_command_code_name_and_nonzero_exit():
+    assert CommandCodeHarness().name == "command-code"
+
+    def fake_runner(cmd, **kwargs):
+        return SimpleNamespace(returncode=1, stdout="", stderr="kaboom")
+
+    res = CommandCodeHarness(runner=fake_runner).run("p", model="deepseek/deepseek-v4-flash")
+    assert res.ok is False
+    assert res.error == "kaboom"
+
+
+def test_command_code_agentic_keeps_flags_and_embeds_budget():
+    seen = {}
+
+    def fake_runner(cmd, *, capture_output, text, timeout):
+        seen["cmd"] = cmd
+        seen["timeout"] = timeout
+        return SimpleNamespace(returncode=0, stdout='{"shape":"rules","rules":{"rules":[]}}',
+                               stderr="")
+
+    res = CommandCodeAgenticHarness(
+        runner=fake_runner, page_budget=5, token_budget=1000, timeout=300.0
+    ).run("find the timetable", model="deepseek/deepseek-v4-flash")
+
+    assert res.ok is True
+    assert CommandCodeAgenticHarness().name == "agentic"
+    cmd = seen["cmd"]
+    assert cmd[0] == "commandcode"
+    assert cmd[-1].startswith("find the timetable")
+    # --yolo already enables the full toolset (incl. web fetch) for autonomous browsing
+    assert "--yolo" in cmd
+    assert cmd[cmd.index("--model") + 1] == "deepseek/deepseek-v4-flash"
     prompt_arg = cmd[-1]
     assert "5 pages" in prompt_arg and "1000 tokens" in prompt_arg
     assert seen["timeout"] == 300.0

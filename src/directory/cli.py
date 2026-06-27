@@ -25,6 +25,8 @@ from directory.ingest.fetch import render_playwright, render_playwright_nav
 from directory.ingest.harness import (
     ClaudeCodeAgenticHarness,
     ClaudeCodeHarness,
+    CommandCodeAgenticHarness,
+    CommandCodeHarness,
     OpenCodeAgenticHarness,
     OpenCodeHarness,
     request_shutdown,
@@ -52,8 +54,9 @@ def _build_harness(settings, *, harness_name: str, fallback: bool, agentic: bool
     authoring funnel from settings + flags.
 
     claude-code: Opus 4.8 @low by default; --fallback appends Opus 4.8 @high;
-    --agentic browses at @low. opencode: the legacy cheap→strong ladder (the
-    high-effort --fallback knob does not apply)."""
+    --agentic browses at @low. opencode: the legacy cheap→strong ladder.
+    command-code: `commandcode -p` on DeepSeek V4 Flash. For both opencode and
+    command-code the high-effort --fallback knob does not apply."""
     if harness_name == "claude-code":
         harness = ClaudeCodeHarness(timeout=settings.author_harness_timeout)
         models = (settings.claude_code_model,)
@@ -80,7 +83,21 @@ def _build_harness(settings, *, harness_name: str, fallback: bool, agentic: bool
             else None
         )
         return harness, models, fb, settings.author_model_strong
-    raise typer.BadParameter(f"unknown harness '{harness_name}' (claude-code|opencode)")
+    if harness_name == "command-code":
+        harness = CommandCodeHarness(timeout=settings.author_harness_timeout)
+        models = (settings.command_code_model,)
+        fb = (
+            CommandCodeAgenticHarness(
+                page_budget=settings.author_page_budget,
+                token_budget=settings.author_token_budget,
+            )
+            if agentic
+            else None
+        )
+        return harness, models, fb, settings.command_code_model
+    raise typer.BadParameter(
+        f"unknown harness '{harness_name}' (claude-code|opencode|command-code)"
+    )
 
 
 def _make_reporter(label: str):
@@ -282,7 +299,7 @@ def author(
     max_calls: int | None = typer.Option(None, "--max-calls", help="Per-run harness call budget"),  # noqa: B008
     horizon_days: int = typer.Option(60, "--horizon-days", help="Verification horizon"),  # noqa: B008
     harness_name: str | None = typer.Option(  # noqa: B008
-        None, "--harness", help="Authoring backend (claude-code|opencode; default from settings)"
+        None, "--harness", help="Backend: claude-code|opencode|command-code (default from settings)"
     ),
     fallback: bool = typer.Option(  # noqa: B008
         False, "--fallback",
@@ -430,7 +447,7 @@ def reauthor(
     ),
     horizon_days: int = typer.Option(60, "--horizon-days", help="Verification horizon"),  # noqa: B008
     harness_name: str | None = typer.Option(  # noqa: B008
-        None, "--harness", help="Authoring backend (claude-code|opencode; default from settings)"
+        None, "--harness", help="Backend: claude-code|opencode|command-code (default from settings)"
     ),
     fallback: bool = typer.Option(  # noqa: B008
         False, "--fallback",

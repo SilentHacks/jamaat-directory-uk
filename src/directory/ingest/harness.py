@@ -308,3 +308,82 @@ class ClaudeCodeAgenticHarness(_SubprocessHarness):
             cmd += ["--effort", effort]
         cmd += ["--allowedTools", "WebFetch,WebSearch", "--output-format", "text", prompt]
         return cmd
+
+
+class _CommandCodeCLI(_SubprocessHarness):
+    """Shared command builder for Command Code harnesses. Drives ``commandcode``
+    in non-interactive print mode (``-p``) with the full automated-run flag set:
+    ``--yolo`` bypasses every permission prompt (enabling the full toolset,
+    including web fetch), ``--trust`` auto-trusts the project (skips the initial
+    permission prompt), and ``--skip-onboarding`` skips taste onboarding. Command
+    Code has no ``@effort`` concept, so the model spec (e.g.
+    ``deepseek/deepseek-v4-flash``) is passed through verbatim. The prompt is the
+    trailing positional — never placed right after ``-p``, whose optional
+    ``[query]`` would otherwise swallow it."""
+
+    name = "command-code"
+
+    def __init__(
+        self, *, binary: str = "commandcode", timeout: float = 600.0, runner=_processes.run
+    ) -> None:
+        super().__init__(binary=binary, timeout=timeout, runner=runner)
+
+    def _command(self, prompt: str, model: str) -> list[str]:
+        return [
+            self._binary,
+            "-p",
+            "--model",
+            model,
+            "--yolo",
+            "--skip-onboarding",
+            "--trust",
+            prompt,
+        ]
+
+
+class CommandCodeHarness(_CommandCodeCLI):
+    """Single-shot authoring via Command Code's print mode. Like the Claude Code
+    harness, the subprocess runs in an isolated temp cwd (never the repo) so a
+    tool call under ``--yolo`` can't touch the project tree; output is robustly
+    parsed downstream (first balanced JSON object), so any tool preamble is
+    tolerated."""
+
+    name = "command-code"
+
+    def __init__(
+        self,
+        *,
+        binary: str = "commandcode",
+        timeout: float = 600.0,
+        runner=_processes.run,
+        cwd: str | None = None,
+    ) -> None:
+        super().__init__(binary=binary, timeout=timeout, runner=runner)
+        # Isolated scratch dir: keeps the tool-enabled agent out of the repo tree.
+        self._cwd = cwd or tempfile.mkdtemp(prefix="jduk-author-")
+
+
+class CommandCodeAgenticHarness(_CommandCodeCLI):
+    """Stage-4 agentic browsing fallback on Command Code. ``--yolo`` already
+    enables the full toolset (including web fetch), so the agent browses
+    autonomously and emits the SAME ``SourceConfig`` envelope as single-shot. The
+    page/token budget is an advisory prompt directive; the subprocess ``timeout``
+    is the only hard ceiling."""
+
+    name = "agentic"
+
+    def __init__(
+        self,
+        *,
+        binary: str = "commandcode",
+        page_budget: int = 8,
+        token_budget: int = 200_000,
+        timeout: float = 600.0,
+        runner=_processes.run,
+    ) -> None:
+        super().__init__(binary=binary, timeout=timeout, runner=runner)
+        self._page_budget = page_budget
+        self._token_budget = token_budget
+
+    def _prepare(self, prompt: str) -> str:
+        return _with_budget(prompt, self._page_budget, self._token_budget)
