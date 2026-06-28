@@ -11,6 +11,8 @@ from directory.ingest.harness import (
     ClaudeCodeHarness,
     CommandCodeAgenticHarness,
     CommandCodeHarness,
+    KimchiAgenticHarness,
+    KimchiHarness,
     OpenCodeAgenticHarness,
     OpenCodeHarness,
     _Aborted,
@@ -229,6 +231,88 @@ def test_command_code_name_and_nonzero_exit():
     res = CommandCodeHarness(runner=fake_runner).run("p", model="deepseek/deepseek-v4-flash")
     assert res.ok is False
     assert res.error == "kaboom"
+
+
+def test_kimchi_builds_print_command_with_automated_run_flags():
+    seen = {}
+
+    def fake_runner(cmd, **kwargs):
+        seen["cmd"] = cmd
+        seen["kwargs"] = kwargs
+        return SimpleNamespace(returncode=0, stdout='{"shape":"rules"}', stderr="")
+
+    res = KimchiHarness(runner=fake_runner, timeout=120.0).run(
+        "do it", model="kimchi-dev/glm-5.2-fp8"
+    )
+
+    assert res.ok is True
+    assert res.text == '{"shape":"rules"}'
+    assert res.model == "kimchi-dev/glm-5.2-fp8"
+    cmd = seen["cmd"]
+    assert cmd[0] == "kimchi"
+    # non-interactive print mode
+    assert "-p" in cmd
+    assert cmd[cmd.index("--model") + 1] == "kimchi-dev/glm-5.2-fp8"
+    # yolo runs freely without a classifier, enabling the full toolset
+    assert "--yolo" in cmd
+    # prompt is the trailing positional
+    assert cmd[-1] == "do it"
+    assert seen["kwargs"]["timeout"] == 120.0
+    # runs in an isolated temp dir, never the repo
+    assert seen["kwargs"]["cwd"].startswith(tempfile.gettempdir())
+
+
+def test_kimchi_passes_model_spec_verbatim():
+    # Kimchi's --model accepts a `provider/id` and an optional `:thinking` suffix;
+    # it has no @effort concept, so the spec is passed through verbatim.
+    seen = {}
+
+    def fake_runner(cmd, **kwargs):
+        seen["cmd"] = cmd
+        return SimpleNamespace(returncode=0, stdout="{}", stderr="")
+
+    KimchiHarness(runner=fake_runner).run("p", model="kimchi-dev/glm-5.2-fp8:high")
+
+    cmd = seen["cmd"]
+    assert cmd[cmd.index("--model") + 1] == "kimchi-dev/glm-5.2-fp8:high"
+
+
+def test_kimchi_name_and_nonzero_exit():
+    assert KimchiHarness().name == "kimchi"
+
+    def fake_runner(cmd, **kwargs):
+        return SimpleNamespace(returncode=1, stdout="", stderr="kaboom")
+
+    res = KimchiHarness(runner=fake_runner).run("p", model="kimchi-dev/glm-5.2-fp8")
+    assert res.ok is False
+    assert res.error == "kaboom"
+
+
+def test_kimchi_agentic_keeps_flags_and_embeds_budget():
+    seen = {}
+
+    def fake_runner(cmd, *, capture_output, text, timeout):
+        seen["cmd"] = cmd
+        seen["timeout"] = timeout
+        return SimpleNamespace(returncode=0, stdout='{"shape":"rules","rules":{"rules":[]}}',
+                               stderr="")
+
+    res = KimchiAgenticHarness(
+        runner=fake_runner, page_budget=5, token_budget=1000, timeout=300.0
+    ).run("find the timetable", model="kimchi-dev/glm-5.2-fp8")
+
+    assert res.ok is True
+    assert KimchiAgenticHarness().name == "agentic"
+    cmd = seen["cmd"]
+    assert cmd[0] == "kimchi"
+    assert cmd[-1].startswith("find the timetable")
+    # --yolo already enables the full toolset (incl. web fetch) for autonomous browsing
+    assert "--yolo" in cmd
+    assert "-p" in cmd
+    assert cmd[cmd.index("--model") + 1] == "kimchi-dev/glm-5.2-fp8"
+    prompt_arg = cmd[-1]
+    assert "5 pages" in prompt_arg and "1000 tokens" in prompt_arg
+    assert seen["timeout"] == 300.0
 
 
 def test_command_code_agentic_keeps_flags_and_embeds_budget():

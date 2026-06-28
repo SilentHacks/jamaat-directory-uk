@@ -393,3 +393,76 @@ class CommandCodeAgenticHarness(_CommandCodeCLI):
 
     def _prepare(self, prompt: str) -> str:
         return _with_budget(prompt, self._page_budget, self._token_budget)
+
+
+class _KimchiCLI(_SubprocessHarness):
+    """Shared command builder for Kimchi harnesses. Drives ``kimchi`` in
+    non-interactive print mode (``-p``) with ``--yolo``, which runs freely with no
+    classifier guard and enables the full toolset (including web fetch). Kimchi's
+    ``--model`` accepts a ``provider/id`` spec plus an optional ``:thinking``
+    suffix (e.g. ``kimchi-dev/glm-5.2-fp8:high``); there is no ``@effort``
+    concept, so the model spec is passed through verbatim. The prompt is the
+    trailing positional — never placed right after ``-p``, which is a boolean
+    flag here (unlike Command Code, where it takes an optional ``[query]``)."""
+
+    name = "kimchi"
+
+    def __init__(
+        self,
+        *,
+        binary: str = "kimchi",
+        timeout: float = 600.0,
+        runner=_processes.run,
+    ) -> None:
+        super().__init__(binary=binary, timeout=timeout, runner=runner)
+
+    def _command(self, prompt: str, model: str) -> list[str]:
+        return [self._binary, "-p", "--model", model, "--yolo", prompt]
+
+
+class KimchiHarness(_KimchiCLI):
+    """Single-shot authoring via Kimchi's print mode. Like the Claude Code and
+    Command Code harnesses, the subprocess runs in an isolated temp cwd (never
+    the repo) so a tool call under ``--yolo`` can't touch the project tree; output
+    is robustly parsed downstream (first balanced JSON object), so any tool
+    preamble is tolerated."""
+
+    name = "kimchi"
+
+    def __init__(
+        self,
+        *,
+        binary: str = "kimchi",
+        timeout: float = 600.0,
+        runner=_processes.run,
+        cwd: str | None = None,
+    ) -> None:
+        super().__init__(binary=binary, timeout=timeout, runner=runner)
+        # Isolated scratch dir: keeps the tool-enabled agent out of the repo tree.
+        self._cwd = cwd or tempfile.mkdtemp(prefix="jduk-author-")
+
+
+class KimchiAgenticHarness(_KimchiCLI):
+    """Stage-4 agentic browsing fallback on Kimchi. ``--yolo`` already enables
+    the full toolset (including web fetch), so the agent browses autonomously and
+    emits the SAME ``SourceConfig`` envelope as single-shot. The page/token
+    budget is an advisory prompt directive; the subprocess ``timeout`` is the
+    only hard ceiling."""
+
+    name = "agentic"
+
+    def __init__(
+        self,
+        *,
+        binary: str = "kimchi",
+        page_budget: int = 8,
+        token_budget: int = 200_000,
+        timeout: float = 600.0,
+        runner=_processes.run,
+    ) -> None:
+        super().__init__(binary=binary, timeout=timeout, runner=runner)
+        self._page_budget = page_budget
+        self._token_budget = token_budget
+
+    def _prepare(self, prompt: str) -> str:
+        return _with_budget(prompt, self._page_budget, self._token_budget)

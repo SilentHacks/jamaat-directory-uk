@@ -35,6 +35,11 @@ class Settings(BaseSettings):
     # fetch→build→self-correct loop), while still cutting off a degenerate agent
     # stuck in a fast tool-call loop. Not truly unbounded for exactly that reason.
     command_code_max_turns: int = 100
+    # Kimchi drives `kimchi -p --yolo` (non-interactive, full toolset, no
+    # classifier). Default model is GLM-5.2 (the fp8 quant). Kimchi's --model
+    # accepts a `:thinking` suffix instead of an @effort split, so the spec is
+    # passed through verbatim and the high-effort --fallback knob does not apply.
+    kimchi_model: str = "kimchi-dev/glm-5.2-fp8"
     author_max_calls: int = 50
     # Hard subprocess ceiling for one single-shot harness call. A tool-enabled
     # agent that re-fetches the live page (WebFetch) to verify its selectors needs
