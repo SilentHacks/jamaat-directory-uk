@@ -253,8 +253,9 @@ def test_kimchi_builds_print_command_with_automated_run_flags():
     # non-interactive print mode
     assert "-p" in cmd
     assert cmd[cmd.index("--model") + 1] == "kimchi-dev/glm-5.2-fp8"
-    # yolo runs freely without a classifier, enabling the full toolset
-    assert "--yolo" in cmd
+    # permission bypass via env var (NOT --yolo, which suppresses stdout in -p mode)
+    assert "--yolo" not in cmd
+    assert seen["kwargs"]["env"]["KIMCHI_PERMISSIONS"] == "yolo"
     # prompt is the trailing positional
     assert cmd[-1] == "do it"
     assert seen["kwargs"]["timeout"] == 120.0
@@ -291,9 +292,10 @@ def test_kimchi_name_and_nonzero_exit():
 def test_kimchi_agentic_keeps_flags_and_embeds_budget():
     seen = {}
 
-    def fake_runner(cmd, *, capture_output, text, timeout):
+    def fake_runner(cmd, *, capture_output, text, timeout, env):
         seen["cmd"] = cmd
         seen["timeout"] = timeout
+        seen["env"] = env
         return SimpleNamespace(returncode=0, stdout='{"shape":"rules","rules":{"rules":[]}}',
                                stderr="")
 
@@ -306,8 +308,9 @@ def test_kimchi_agentic_keeps_flags_and_embeds_budget():
     cmd = seen["cmd"]
     assert cmd[0] == "kimchi"
     assert cmd[-1].startswith("find the timetable")
-    # --yolo already enables the full toolset (incl. web fetch) for autonomous browsing
-    assert "--yolo" in cmd
+    # permission bypass via env var (NOT --yolo, which suppresses stdout in -p mode)
+    assert "--yolo" not in cmd
+    assert seen["env"]["KIMCHI_PERMISSIONS"] == "yolo"
     assert "-p" in cmd
     assert cmd[cmd.index("--model") + 1] == "kimchi-dev/glm-5.2-fp8"
     prompt_arg = cmd[-1]

@@ -78,10 +78,11 @@ class _ProcessManager:
                     self._signal(proc, signal.SIGKILL)
         return len(live)
 
-    def run(self, cmd, *, capture_output=True, text=True, timeout=None, cwd=None):
+    def run(self, cmd, *, capture_output=True, text=True, timeout=None, cwd=None, env=None):
         """``subprocess.run``-compatible runner that registers the child for group
         termination. Refuses to spawn once shutdown has been latched, and never
-        leaks the child if the call is interrupted or times out."""
+        leaks the child if the call is interrupted or times out. ``env`` replaces
+        the child environment when set (callers merge in the parent env first)."""
         if self._shutdown.is_set():
             raise _Aborted("authoring shutdown in progress")
         pipe = subprocess.PIPE if capture_output else None
@@ -89,6 +90,8 @@ class _ProcessManager:
         if _POSIX:
             # Own session/group so killpg reaches the agent *and* its child tools.
             kwargs["start_new_session"] = True
+        if env is not None:
+            kwargs["env"] = env
         proc = subprocess.Popen(cmd, stdout=pipe, stderr=pipe, text=text, cwd=cwd, **kwargs)
         self._register(proc)
         try:
@@ -157,6 +160,7 @@ class _SubprocessHarness:
 
     name = "cli"
     _cwd: str | None = None
+    _env: dict[str, str] | None = None
 
     def __init__(self, *, binary: str, timeout: float = 180.0, runner=_processes.run) -> None:
         self._binary = binary
@@ -173,6 +177,10 @@ class _SubprocessHarness:
         kwargs = {"capture_output": True, "text": True, "timeout": self._timeout}
         if self._cwd:
             kwargs["cwd"] = self._cwd
+        if self._env:
+            # Merge so the child keeps the parent env (API keys, PATH, …) plus
+            # the harness overrides.
+            kwargs["env"] = {**os.environ, **self._env}
         try:
             proc = self._runner(self._command(self._prepare(prompt), model), **kwargs)
         except _Aborted:
@@ -397,8 +405,12 @@ class CommandCodeAgenticHarness(_CommandCodeCLI):
 
 class _KimchiCLI(_SubprocessHarness):
     """Shared command builder for Kimchi harnesses. Drives ``kimchi`` in
-    non-interactive print mode (``-p``) with ``--yolo``, which runs freely with no
-    classifier guard and enables the full toolset (including web fetch). Kimchi's
+    non-interactive print mode (``-p``). The full toolset — including web fetch,
+    so the agent can recover a truncated candidate region — is enabled by setting
+    ``KIMCHI_PERMISSIONS=yolo`` in the child env. The ``--yolo`` *flag* is
+    deliberately avoided: in ``-p`` mode it suppresses stdout (exit 0, empty
+    output), which defeats the downstream JSON extractor; the env-var form
+    applies the same permission bypass without that side effect. Kimchi's
     ``--model`` accepts a ``provider/id`` spec plus an optional ``:thinking``
     suffix (e.g. ``kimchi-dev/glm-5.2-fp8:high``); there is no ``@effort``
     concept, so the model spec is passed through verbatim. The prompt is the
@@ -415,17 +427,19 @@ class _KimchiCLI(_SubprocessHarness):
         runner=_processes.run,
     ) -> None:
         super().__init__(binary=binary, timeout=timeout, runner=runner)
+        # yolo permission bypass via env (see class docstring), NOT the --yolo flag.
+        self._env = {"KIMCHI_PERMISSIONS": "yolo"}
 
     def _command(self, prompt: str, model: str) -> list[str]:
-        return [self._binary, "-p", "--model", model, "--yolo", prompt]
+        return [self._binary, "-p", "--model", model, prompt]
 
 
 class KimchiHarness(_KimchiCLI):
     """Single-shot authoring via Kimchi's print mode. Like the Claude Code and
     Command Code harnesses, the subprocess runs in an isolated temp cwd (never
-    the repo) so a tool call under ``--yolo`` can't touch the project tree; output
-    is robustly parsed downstream (first balanced JSON object), so any tool
-    preamble is tolerated."""
+    the repo) so a tool call under the yolo permission mode can't touch the
+    project tree; output is robustly parsed downstream (first balanced JSON
+    object), so any tool preamble is tolerated."""
 
     name = "kimchi"
 
@@ -443,11 +457,12 @@ class KimchiHarness(_KimchiCLI):
 
 
 class KimchiAgenticHarness(_KimchiCLI):
-    """Stage-4 agentic browsing fallback on Kimchi. ``--yolo`` already enables
-    the full toolset (including web fetch), so the agent browses autonomously and
-    emits the SAME ``SourceConfig`` envelope as single-shot. The page/token
-    budget is an advisory prompt directive; the subprocess ``timeout`` is the
-    only hard ceiling."""
+    """Stage-4 agentic browsing fallback on Kimchi. The yolo permission mode
+    (``KIMCHI_PERMISSIONS=yolo``) already enables the full toolset (including
+    web fetch), so the agent browses autonomously and emits the SAME
+    ``SourceConfig`` envelope as single-shot. The page/token budget is an
+    advisory prompt directive; the subprocess ``timeout`` is the only hard
+    ceiling."""
 
     name = "agentic"
 
