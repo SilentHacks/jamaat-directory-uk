@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     # accepts a `:thinking` suffix instead of an @effort split, so the spec is
     # passed through verbatim and the high-effort --fallback knob does not apply.
     kimchi_model: str = "kimchi-dev/glm-5.2-fp8"
+    # Cursor drives `agent -p --yolo --trust` (non-interactive print mode, full
+    # toolset, workspace trusted). Default model is composer-2.5. Cursor has no
+    # @effort concept, so the high-effort --fallback knob does not apply.
+    cursor_model: str = "composer-2.5"
     author_max_calls: int = 50
     # Hard subprocess ceiling for one single-shot harness call. A tool-enabled
     # agent that re-fetches the live page (WebFetch) to verify its selectors needs

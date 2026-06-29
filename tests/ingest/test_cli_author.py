@@ -5,6 +5,8 @@ from directory.ingest.author import AuthorOutcome
 from directory.ingest.harness import (
     ClaudeCodeAgenticHarness,
     ClaudeCodeHarness,
+    CursorAgenticHarness,
+    CursorHarness,
     OpenCodeAgenticHarness,
     OpenCodeHarness,
 )
@@ -138,6 +140,22 @@ def test_author_opencode_harness_uses_legacy_ladder(monkeypatch, tmp_path):
     assert isinstance(captured["harness"], OpenCodeHarness)
     assert isinstance(captured["fallback"], OpenCodeAgenticHarness)
     assert len(captured["models"]) == 2  # cheap → strong ladder
+
+
+def test_author_cursor_harness_uses_composer_model(monkeypatch, tmp_path):
+    import directory.cli as cli
+
+    captured = {}
+    monkeypatch.setenv("DIRECTORY_DB_PATH", str(tmp_path / "t.db"))
+    monkeypatch.setattr(cli, "run_authoring", lambda engine, **kw: captured.update(kw) or [])
+
+    runner.invoke(cli.app, ["init-db"])
+    result = runner.invoke(cli.app, ["author", "--harness", "cursor", "--agentic"])
+    assert result.exit_code == 0
+    assert isinstance(captured["harness"], CursorHarness)
+    assert isinstance(captured["fallback"], CursorAgenticHarness)
+    assert captured["models"] == ("composer-2.5",)
+    assert captured["fallback_model"] == "composer-2.5"
 
 
 def test_author_no_model_runs_deterministic_only(monkeypatch, tmp_path):
