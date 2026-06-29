@@ -27,7 +27,7 @@ from directory.ingest.evidence import (
 )
 from directory.ingest.extractors.engine import extract
 from directory.ingest.extractors.platforms import base as platforms
-from directory.ingest.fetch import USER_AGENT, fetch
+from directory.ingest.fetch import USER_AGENT, FetchResult, fetch
 from directory.ingest.gates import run_gates
 from directory.ingest.materialize import materialize
 from directory.ingest.pager import collect_documents, extract_documents
@@ -244,9 +244,7 @@ class DiscoverOutcome:
     detail: str | None = None
 
 
-def _page_set(
-    home_url: str, homepage_html: str, blocklist: frozenset[str] | None
-) -> list[str]:
+def _page_set(home_url: str, homepage_html: str, blocklist: frozenset[str] | None) -> list[str]:
     """Ordered, deduped, blocklist-filtered candidate pages: homepage first, then
     the ranked sub-paths, then same-host keyword links from the homepage."""
     ordered: list[str] = [home_url]
@@ -295,8 +293,12 @@ def _verify(html: str, match, *, today: date | None, horizon_days: int, fetcher)
     paging = config.paging
     if paging is not None and paging.mode == "url_template":
         docs, err = collect_documents(
-            config, match.url, today=today, horizon_days=_VERIFY_HORIZON_DAYS,
-            requires_js=match.requires_js, fetcher=fetcher,
+            config,
+            match.url,
+            today=today,
+            horizon_days=_VERIFY_HORIZON_DAYS,
+            requires_js=match.requires_js,
+            fetcher=fetcher,
         )
         if err or not docs:
             return None
@@ -315,8 +317,12 @@ def _verify(html: str, match, *, today: date | None, horizon_days: int, fetcher)
 
 
 def _best_verified(
-    pages: list[str], fetched_pages: dict[str, str], *,
-    today: date | None, horizon_days: int, fetcher,
+    pages: list[str],
+    fetched_pages: dict[str, str],
+    *,
+    today: date | None,
+    horizon_days: int,
+    fetcher,
 ) -> _Verified | None:
     """Pick the best verified page: auto_accept ≻ review, platform-specific ≻
     generic, more-complete ≻ less, earlier page ≻ later."""
@@ -328,9 +334,7 @@ def _best_verified(
         match = platforms.detect_platform(html, url, fetcher=fetcher)
         if match is None:
             continue
-        verified = _verify(
-            html, match, today=today, horizon_days=horizon_days, fetcher=fetcher
-        )
+        verified = _verify(html, match, today=today, horizon_days=horizon_days, fetcher=fetcher)
         if verified is None:
             continue
         gate, completeness = verified
@@ -360,7 +364,10 @@ def _bundle_from_pages(
         region, text = strip_to_region(html)
         candidates.append(
             Candidate(
-                url=url, score=_score(text), region_html=region, text=text,
+                url=url,
+                score=_score(text),
+                region_html=region,
+                text=text,
                 requires_js=url in rendered_urls,
             )
         )
@@ -393,8 +400,9 @@ def discover_mosque(
 ) -> DiscoverOutcome:
     with session_scope(engine) as s:
         mosque = repo.get_mosque(s, mosque_id)
-        website = mosque.website_url if mosque else None
         existing = repo.get_source(s, mosque_id)
+        website_url = mosque.website_url if mosque else None
+        existing_url = existing.url if existing else None
         has_config = existing is not None and existing.config is not None
         existing_platform = existing.platform if existing else None
 
@@ -407,30 +415,60 @@ def discover_mosque(
         return DiscoverOutcome(
             mosque_id, "skipped", existing_platform, detail="existing config preserved"
         )
-    if not website:
+
+    # Prefer the URL that already produced a verified config; it is a far better
+    # discovery seed than the mosque's homepage (which may be generic chrome that
+    # never links to the timetable sub-page). Fall back to the homepage if the
+    # preferred URL is dead or returns no usable content.
+    seed_urls = []
+    if existing_url:
+        seed_urls.append(existing_url)
+    if website_url:
+        if not seed_urls or website_url != seed_urls[0]:
+            seed_urls.append(website_url)
+    if not seed_urls:
         return DiscoverOutcome(mosque_id, "no_website", None)
 
-    live = check_liveness(website, client=client)
-    if not live.alive:
-        with session_scope(engine, write=True) as s:
-            repo.update_mosque_website(s, mosque_id, None)
-        return DiscoverOutcome(mosque_id, "dead", None, detail=live.error)
+    live: LivenessResult | None = None
+    home_url: str | None = None
+    fetched: FetchResult | None = None
+    for url in seed_urls:
+        live = check_liveness(url, client=client)
+        if not live.alive:
+            continue
+        candidate_home = live.final_url or url
+        # Dead-end the resolved host if it is a social/aggregator/maps domain: no
+        # fetch, no AI. Checks the *resolved* URL so redirects to a dead host count.
+        if is_blocklisted(candidate_home, blocklist=blocklist):
+            with session_scope(engine, write=True) as s:
+                repo.create_or_update_source(
+                    s,
+                    source_id=mosque_id,
+                    mosque_id=mosque_id,
+                    url=candidate_home,
+                    platform=None,
+                    shape=None,
+                    config=None,
+                    requires_js=False,
+                    triage_status="blocklisted",
+                )
+            return DiscoverOutcome(mosque_id, "blocklisted", None)
+        fetched = fetcher(candidate_home, client=client)
+        if _usable(fetched):
+            home_url = candidate_home
+            break
 
-    home_url = live.final_url or website
+    if home_url is None:
+        # All seeds failed. Clear the canonical website only if that was one of
+        # the seeds; a stale source.url should not wipe the mosque homepage.
+        if website_url and website_url in seed_urls:
+            with session_scope(engine, write=True) as s:
+                repo.update_mosque_website(s, mosque_id, None)
+        return DiscoverOutcome(
+            mosque_id, "dead", None, detail=(live.error if live else "unreachable")
+        )
 
-    # Dead-end the resolved host if it is a social/aggregator/maps domain: no
-    # fetch, no AI. Checks the *resolved* URL so redirects to a dead host count.
-    if is_blocklisted(home_url, blocklist=blocklist):
-        with session_scope(engine, write=True) as s:
-            repo.create_or_update_source(
-                s, source_id=mosque_id, mosque_id=mosque_id, url=home_url,
-                platform=None, shape=None, config=None, requires_js=False,
-                triage_status="blocklisted",
-            )
-        return DiscoverOutcome(mosque_id, "blocklisted", None)
-
-    fetched = fetcher(home_url, client=client)
-    homepage_html = fetched.html or "" if _usable(fetched) else ""
+    homepage_html = fetched.html or "" if fetched and _usable(fetched) else ""
 
     # Fetch the ordered page set once: homepage, ranked sub-pages, keyword links.
     pages = _page_set(home_url, homepage_html, blocklist)
@@ -464,8 +502,11 @@ def discover_mosque(
                 rendered_pages[url] = res.html
         if rendered_pages:
             rendered = _best_verified(
-                list(rendered_pages), rendered_pages,
-                today=today, horizon_days=horizon_days, fetcher=fetcher,
+                list(rendered_pages),
+                rendered_pages,
+                today=today,
+                horizon_days=horizon_days,
+                fetcher=fetcher,
             )
             if rendered is not None:
                 best = rendered
@@ -486,8 +527,13 @@ def discover_mosque(
                 triage_status="authored",
             )
         result = extract_source(
-            engine, mosque_id, fetcher=fetcher, today=today, horizon_days=horizon_days,
-            renderer=renderer, nav_renderer=nav_renderer,
+            engine,
+            mosque_id,
+            fetcher=fetcher,
+            today=today,
+            horizon_days=horizon_days,
+            renderer=renderer,
+            nav_renderer=nav_renderer,
         )
         return DiscoverOutcome(mosque_id, result.triage_status, match.platform)
 
@@ -503,9 +549,17 @@ def discover_mosque(
     # Deterministic miss → build structured evidence once (reused for the
     # enumerator, the terminal check, and the AI hand-off bundle).
     evidences = [
-        build_page_evidence(html, url, today=today)
-        for url, html in effective_pages.items()
+        build_page_evidence(html, url, today=today) for url, html in effective_pages.items()
     ]
+
+    # Build the candidate bundle once we know the effective page set. Saving it
+    # before every deterministic exit keeps forced re-authoring from operating
+    # against stale evidence (e.g. a source whose timetable lives on a sub-page
+    # that the original homepage seed never reached).
+    bundle = _bundle_from_pages(
+        mosque_id, home_url, effective_pages, evidence=evidences, rendered_urls=rendered_urls
+    )
+    bundle.save(candidate_root)
 
     # Deterministic config enumeration: try the obvious configs the evidence implies
     # (media/PDF links, widgets, extra table orientations) and verify them in memory
@@ -515,16 +569,18 @@ def discover_mosque(
     enum_candidates = enumerate_candidates(evidences)
     if enum_candidates:
         recovered = best_verified_candidate(
-            enum_candidates, today=today, horizon_days=horizon_days,
+            enum_candidates,
+            today=today,
+            horizon_days=horizon_days,
             fetcher=cached_fetcher(effective_pages, fetcher),
-            renderer=renderer, nav_renderer=nav_renderer,
+            renderer=renderer,
+            nav_renderer=nav_renderer,
         )
         if recovered is not None:
-            out = persist_verified_candidate(
-                engine, mosque_id, recovered, authored_by="enumerator"
-            )
+            out = persist_verified_candidate(engine, mosque_id, recovered, authored_by="enumerator")
             return DiscoverOutcome(
-                mosque_id, out.triage_status,
+                mosque_id,
+                out.triage_status,
                 recovered.candidate.platform or "enumerator",
             )
 
@@ -537,23 +593,23 @@ def discover_mosque(
         last_status, last_error = terminal
         with session_scope(engine, write=True) as s:
             repo.create_or_update_source(
-                s, source_id=mosque_id, mosque_id=mosque_id, url=home_url,
-                platform=None, shape=None, config=None, requires_js=False,
+                s,
+                source_id=mosque_id,
+                mosque_id=mosque_id,
+                url=home_url,
+                platform=None,
+                shape=None,
+                config=None,
+                requires_js=False,
                 triage_status="no_timetable",
             )
-            repo.set_source_state(
-                s, mosque_id, last_status=last_status, last_error=last_error
-            )
+            repo.set_source_state(s, mosque_id, last_status=last_status, last_error=last_error)
         return DiscoverOutcome(mosque_id, "no_timetable", None, detail=last_status)
 
     # Otherwise hand off to the AI funnel. The bundle carries the rendered DOM for
     # JS pages (so the model sees the real timetable) and flags those candidates
     # requires_js, so the source row — and the model's first verify — render instead
     # of fetching the empty shell.
-    bundle = _bundle_from_pages(
-        mosque_id, home_url, effective_pages, evidence=evidences, rendered_urls=rendered_urls
-    )
-    bundle.save(candidate_root)
     top = bundle.candidates[0] if bundle.candidates else None
     with session_scope(engine, write=True) as s:
         repo.create_or_update_source(
