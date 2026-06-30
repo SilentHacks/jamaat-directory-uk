@@ -17,6 +17,7 @@ data/*.db-wal
 data/*.db-shm
 data/seed/*.json
 !data/seed/.gitkeep
+data/towerhamlets_burhanuddin.json
 
 # Raw upstream data dumps (the cleaned subset is generated, not committed)
 mib_uk_ie_mosques.json
@@ -24,6 +25,7 @@ mib_uk_ie_mosques.json
 
 # Internal planning, design, and process scratch — NEVER in the public repo
 DESIGN.md
+docs/PLAN.md
 docs/superpowers/
 .superpowers/
 
@@ -31,6 +33,11 @@ docs/superpowers/
 .pytest_cache/
 .ruff_cache/
 .env
+
+# Local agent CLI configs (per-machine harness settings, not for the public repo)
+.claude/
+.commandcode/
+.kimchi/
 
 # Prod-only ops material (handbook, deploy dir, origin cert)
 .local/
