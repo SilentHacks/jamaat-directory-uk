@@ -233,6 +233,7 @@ def extract_html_repeated(
     today: date | None = None,
 ) -> ExtractionResult:
     grid = config.grid
+    run_day = today or date.today()
     soup = BeautifulSoup(html, "lxml")
     items = soup.select(grid.row_selector) if grid.row_selector else []
     if not items:
@@ -247,6 +248,8 @@ def extract_html_repeated(
         if dtext:
             result.texts.append(dtext)
         d = parse_date(dtext, year=year, month=month) if dtext else None
+        if d is None and grid.single_day:
+            d = run_day
         if d is None:
             continue
         for col in grid.columns:

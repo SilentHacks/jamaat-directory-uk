@@ -121,8 +121,16 @@ _DAY_ONLY_RE = re.compile(r"^\s*(\d{1,2})(?:st|nd|rd|th)?\s*$")
 # A weekday word (full or abbreviated) followed by a day-of-month, e.g. "Mon 1",
 # "Tue 2", "Sunday 30", "Fri 13th" — common in monthly timetables where the month
 # comes from context. The weekday is decorative; only the day number is used.
+_WEEKDAY_WORD = r"(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*\.?"
 _WEEKDAY_DAY_RE = re.compile(
-    r"^\s*(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?\s*$"
+    rf"^\s*{_WEEKDAY_WORD}\s+(\d{{1,2}})(?:st|nd|rd|th)?\s*$"
+)
+# The reverse order — day-of-month then weekday, e.g. "1 Mon", "2 Tue", "30th Sun".
+_DAY_WEEKDAY_RE = re.compile(
+    rf"^\s*(\d{{1,2}})(?:st|nd|rd|th)?\s+{_WEEKDAY_WORD}\s*$"
+)
+_DAY_WEEKDAY_NOSPACE_RE = re.compile(
+    rf"^\s*(\d{{1,2}})(?:st|nd|rd|th)?{_WEEKDAY_WORD}\s*$"
 )
 
 
@@ -174,8 +182,12 @@ def parse_date(raw: str | None, *, year: int, month: int | None = None) -> date 
         return _safe_date(yr_i, mon, day)
 
     m = _DAY_MONTH_RE.search(s)
-    if m and m.group(2) in _MONTHS:
-        return _safe_date(year, _MONTHS[m.group(2)], int(m.group(1)))
+    if m:
+        word = m.group(2)
+        if word in _MONTHS:
+            return _safe_date(year, _MONTHS[word], int(m.group(1)))
+        if month is not None and re.fullmatch(_WEEKDAY_WORD, word):
+            return _safe_date(year, month, int(m.group(1)))
 
     m = _MONTH_DAY_RE.search(s)
     if m and m.group(1) in _MONTHS:
@@ -188,6 +200,11 @@ def parse_date(raw: str | None, *, year: int, month: int | None = None) -> date 
     m = _WEEKDAY_DAY_RE.match(s)
     if m and month is not None:
         return _safe_date(year, month, int(m.group(1)))
+
+    for day_weekday in (_DAY_WEEKDAY_RE, _DAY_WEEKDAY_NOSPACE_RE):
+        m = day_weekday.match(s)
+        if m and month is not None:
+            return _safe_date(year, month, int(m.group(1)))
 
     return None
 

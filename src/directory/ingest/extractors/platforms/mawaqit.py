@@ -6,10 +6,18 @@ from directory.ingest.extractors.config_schema import SourceConfig, WidgetSpec
 from directory.ingest.extractors.engine import Cell, ExtractionResult, register_widget
 from directory.ingest.extractors.platforms.base import PlatformMatch, register
 from directory.ingest.jsonscan import first_json_object
-from directory.ingest.normalize import parse_time
+from directory.ingest.normalize import parse_offset, parse_time
 
-# Mawaqit calendar rows are ordered [fajr, dhuhr, asr, maghrib, isha].
+# Mawaqit calendar rows are [fajr, shuruq, dhuhr, asr, maghrib, isha] when six
+# values are present; older/simpler feeds may omit shuruq and carry five.
 _ORDER = list(DAILY_PRAYERS)
+_SIX_COL = (0, 2, 3, 4, 5)
+
+
+def _prayer_times(times: list) -> list:
+    if len(times) >= 6:
+        return [times[i] for i in _SIX_COL]
+    return list(times[: len(_ORDER)])
 
 
 def _parse_confdata(html: str) -> dict | None:
@@ -22,18 +30,27 @@ def _parse_confdata(html: str) -> dict | None:
         return None
 
 
-def _month_cells(month_map: dict, prayer_order, kind: str, *, year: int, month: int) -> list[Cell]:
+def _month_cells(month_map: dict, kind: str, *, year: int, month: int) -> list[Cell]:
     cells: list[Cell] = []
     for day_str, times in month_map.items():
         try:
             day = int(day_str)
         except ValueError:
             continue
-        for prayer, raw in zip(prayer_order, times, strict=False):
-            t = parse_time(raw, prefer_pm=(prayer != prayer_order[0]))
-            if t is None:
+        for prayer, raw in zip(_ORDER, _prayer_times(list(times)), strict=False):
+            t = parse_time(raw, prefer_pm=(prayer != _ORDER[0]))
+            if t is not None:
+                cells.append(Cell(date=date(year, month, day), prayer=prayer, kind=kind, time=t))
                 continue
-            cells.append(Cell(date=date(year, month, day), prayer=prayer, kind=kind, time=t))
+            off = parse_offset(raw)
+            if off is None:
+                continue
+            cells.append(
+                Cell(
+                    date=date(year, month, day), prayer=prayer, kind=kind, time=None,
+                    offset_min=off, base_prayer=prayer,
+                )
+            )
     return cells
 
 
@@ -46,9 +63,9 @@ def extract_mawaqit(payload: str, *, year: int, month: int | None) -> Extraction
     begin_cal = conf.get("calendar") or []
     jamaah_cal = conf.get("iqamaCalendar") or []
     if 0 <= idx < len(begin_cal) and begin_cal[idx]:
-        result.cells.extend(_month_cells(begin_cal[idx], _ORDER, "begin", year=year, month=month))
+        result.cells.extend(_month_cells(begin_cal[idx], "begin", year=year, month=month))
     if 0 <= idx < len(jamaah_cal) and jamaah_cal[idx]:
-        result.cells.extend(_month_cells(jamaah_cal[idx], _ORDER, "jamaah", year=year, month=month))
+        result.cells.extend(_month_cells(jamaah_cal[idx], "jamaah", year=year, month=month))
     return result
 
 

@@ -34,6 +34,15 @@ def test_weekday_plus_day_uses_month_context():
     assert parse_date("Mon 1", year=2026) is None  # still needs a month context
 
 
+def test_day_plus_weekday_uses_month_context():
+    # Some timetables reverse the label to "1 Mon", "2 Tue", occasionally without
+    # a space ("1Mon"); the weekday is decorative and the month comes from context.
+    assert parse_date("1 Mon", year=2026, month=6) == date(2026, 6, 1)
+    assert parse_date("2 Tue", year=2026, month=6) == date(2026, 6, 2)
+    assert parse_date("1Mon", year=2026, month=6) == date(2026, 6, 1)
+    assert parse_date("1 Mon", year=2026) is None
+
+
 def test_weekday_alone_is_not_a_date():
     # A bare weekday (no day number) carries no date.
     assert parse_date("Monday", year=2026, month=6) is None
